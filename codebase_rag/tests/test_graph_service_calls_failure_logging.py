@@ -56,8 +56,8 @@ def test_calls_failure_logging_single_batch(
     )
 
     with patch.object(
-        graph_service,
-        "_execute_batch_with_return",
+        MemgraphIngestor,
+        "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 0}, {"created": 0}],
     ):
         graph_service.flush_relationships()
@@ -72,13 +72,6 @@ def test_calls_failure_logging_single_batch(
 def test_calls_failure_logging_multiple_batches(
     graph_service: MemgraphIngestor, log_messages: list[str]
 ) -> None:
-    """Test that CALLS failures are logged correctly across multiple batches.
-
-    This is the critical test case that validates the bug fix:
-    - Previously, the code used cumulative totals (total_attempted - total_successful)
-    - This would incorrectly report failures for batches after the first one
-    - Now it correctly uses batch-specific counts (len(params_list) - batch_successful)
-    """
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
         "CALLS",
@@ -104,14 +97,16 @@ def test_calls_failure_logging_multiple_batches(
     call_count = 0
 
     def mock_execute_batch(
-        query: str, params_list: list[dict[str, Any]]
+        conn: Any, query: str, params_list: list[dict[str, Any]]
     ) -> list[dict[str, int]]:
         nonlocal call_count
         call_count += 1
         return [{"created": 1}, {"created": 0}]
 
     with patch.object(
-        graph_service, "_execute_batch_with_return", side_effect=mock_execute_batch
+        MemgraphIngestor,
+        "_execute_batch_with_return_on",
+        side_effect=mock_execute_batch,
     ):
         graph_service.flush_relationships()
 
@@ -127,7 +122,6 @@ def test_calls_failure_logging_multiple_batches(
 def test_calls_success_no_failure_logging(
     graph_service: MemgraphIngestor, log_messages: list[str]
 ) -> None:
-    """Test that successful CALLS don't trigger failure warnings."""
     graph_service.ensure_relationship_batch(
         ("Method", "qualified_name", "project.module.ClassA.methodA()"),
         "CALLS",
@@ -140,8 +134,8 @@ def test_calls_success_no_failure_logging(
     )
 
     with patch.object(
-        graph_service,
-        "_execute_batch_with_return",
+        MemgraphIngestor,
+        "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 1}],
     ):
         graph_service.flush_relationships()
@@ -154,7 +148,6 @@ def test_calls_success_no_failure_logging(
 def test_non_calls_relationships_no_failure_logging(
     graph_service: MemgraphIngestor, log_messages: list[str]
 ) -> None:
-    """Test that failures in non-CALLS relationships don't trigger CALLS-specific logging."""
     graph_service.ensure_relationship_batch(
         ("Module", "qualified_name", "project.moduleA"),
         "IMPORTS",
@@ -167,8 +160,8 @@ def test_non_calls_relationships_no_failure_logging(
     )
 
     with patch.object(
-        graph_service,
-        "_execute_batch_with_return",
+        MemgraphIngestor,
+        "_execute_batch_with_return_on",
         return_value=[{"created": 1}, {"created": 0}],
     ):
         graph_service.flush_relationships()

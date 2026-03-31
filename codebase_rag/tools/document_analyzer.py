@@ -21,11 +21,15 @@ from . import tool_descriptions as td
 
 
 class _NotSupportedClient:
+    __slots__ = ()
+
     def __getattr__(self, name: str) -> NoReturn:
         raise NotImplementedError(ex.DOC_UNSUPPORTED_PROVIDER)
 
 
 class DocumentAnalyzer:
+    __slots__ = ("project_root", "client")
+
     def __init__(self, project_root: str) -> None:
         self.project_root = Path(project_root).resolve()
 
@@ -35,6 +39,8 @@ class DocumentAnalyzer:
         if orchestrator_provider == cs.Provider.GOOGLE:
             if orchestrator_config.provider_type == cs.GoogleProviderType.VERTEX:
                 self.client = genai.Client(
+                    vertexai=True,
+                    credentials=orchestrator_config.service_account_file,
                     project=orchestrator_config.project_id,
                     location=orchestrator_config.region,
                 )
@@ -150,9 +156,7 @@ def create_document_analyzer_tool(analyzer: DocumentAnalyzer) -> Tool:
         try:
             result = analyzer.analyze(file_path, question)
             preview = result[:100] if result else "None"
-            logger.debug(
-                ls.DOC_RESULT.format(type=type(result).__name__, preview=preview)
-            )
+            logger.debug(ls.DOC_RESULT, type=type(result).__name__, preview=preview)
             return result
         except Exception as e:
             logger.exception(ls.DOC_EXCEPTION.format(error=e))

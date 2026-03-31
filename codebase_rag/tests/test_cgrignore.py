@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from typer.testing import CliRunner
 
+from codebase_rag.cli import app
 from codebase_rag.config import (
     CGRIGNORE_FILENAME,
     EMPTY_CGRIGNORE,
@@ -21,7 +24,7 @@ def test_returns_empty_when_no_file(temp_repo: Path) -> None:
 
 def test_loads_exclude_patterns_from_file(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("vendor\nmy_build\n")
+    cgrignore.write_text(encoding="utf-8", data="vendor\nmy_build\n")
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -33,7 +36,9 @@ def test_loads_exclude_patterns_from_file(temp_repo: Path) -> None:
 
 def test_ignores_comments_and_blank_lines(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("# Comment\n\nvendor\n  # Indented comment\n")
+    cgrignore.write_text(
+        encoding="utf-8", data="# Comment\n\nvendor\n  # Indented comment\n"
+    )
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -43,7 +48,7 @@ def test_ignores_comments_and_blank_lines(temp_repo: Path) -> None:
 
 def test_strips_whitespace(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("  vendor  \n\ttemp\t\n")
+    cgrignore.write_text(encoding="utf-8", data="  vendor  \n\ttemp\t\n")
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -55,7 +60,7 @@ def test_returns_empty_on_read_error(
     temp_repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("vendor")
+    cgrignore.write_text(encoding="utf-8", data="vendor")
 
     original_open = Path.open
 
@@ -72,7 +77,7 @@ def test_returns_empty_on_read_error(
 
 def test_handles_duplicates(temp_repo: Path) -> None:
     cgrignore = temp_repo / CGRIGNORE_FILENAME
-    cgrignore.write_text("vendor\nvendor\ntemp\n")
+    cgrignore.write_text(encoding="utf-8", data="vendor\nvendor\ntemp\n")
 
     result = load_cgrignore_patterns(temp_repo)
 
@@ -91,7 +96,7 @@ def test_returns_empty_if_cgrignore_is_a_directory(temp_repo: Path) -> None:
 class TestNegationSyntax:
     def test_parses_negation_patterns(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("!vendor\n!node_modules\n")
+        cgrignore.write_text(encoding="utf-8", data="!vendor\n!node_modules\n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -100,7 +105,9 @@ class TestNegationSyntax:
 
     def test_mixed_exclude_and_negation(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("custom_build\n!vendor\ntemp_data\n!node_modules\n")
+        cgrignore.write_text(
+            encoding="utf-8", data="custom_build\n!vendor\ntemp_data\n!node_modules\n"
+        )
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -109,7 +116,7 @@ class TestNegationSyntax:
 
     def test_negation_strips_leading_whitespace(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("  !vendor  \n")
+        cgrignore.write_text(encoding="utf-8", data="  !vendor  \n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -119,7 +126,7 @@ class TestNegationSyntax:
         self, temp_repo: Path
     ) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("!  foo\n!   bar  \n")
+        cgrignore.write_text(encoding="utf-8", data="!  foo\n!   bar  \n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -127,7 +134,7 @@ class TestNegationSyntax:
 
     def test_returns_cgrignore_patterns_type(self, temp_repo: Path) -> None:
         cgrignore = temp_repo / CGRIGNORE_FILENAME
-        cgrignore.write_text("exclude\n!unignore\n")
+        cgrignore.write_text(encoding="utf-8", data="exclude\n!unignore\n")
 
         result = load_cgrignore_patterns(temp_repo)
 
@@ -142,7 +149,7 @@ class TestCgrignoreIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("vendor\ncustom_cache\n")
+        cgrignore.write_text(encoding="utf-8", data="vendor\ncustom_cache\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -157,7 +164,7 @@ class TestCgrignoreIntegration:
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("from_cgrignore\n")
+        cgrignore.write_text(encoding="utf-8", data="from_cgrignore\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path, cli_excludes=["from_cli"])
@@ -181,7 +188,7 @@ class TestCgrignoreIntegration:
         self, mock_context: MagicMock, mock_ask: MagicMock, tmp_path: Path
     ) -> None:
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("my_custom_dir\n")
+        cgrignore.write_text(encoding="utf-8", data="my_custom_dir\n")
         mock_ask.return_value = "none"
 
         prompt_for_unignored_directories(tmp_path)
@@ -195,7 +202,7 @@ class TestCgrignoreIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text(".git\nvendor\n")
+        cgrignore.write_text(encoding="utf-8", data=".git\nvendor\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -213,7 +220,7 @@ class TestNegationIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("custom_exclude\n!vendor\n")
+        cgrignore.write_text(encoding="utf-8", data="custom_exclude\n!vendor\n")
         mock_ask.return_value = "none"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -230,7 +237,7 @@ class TestNegationIntegration:
         (tmp_path / ".git").mkdir()
         (tmp_path / "node_modules").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("!vendor\n")
+        cgrignore.write_text(encoding="utf-8", data="!vendor\n")
         mock_ask.return_value = "1"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -240,7 +247,7 @@ class TestNegationIntegration:
 
     def test_unignore_only_returns_without_prompt(self, tmp_path: Path) -> None:
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("!vendor\n!node_modules\n")
+        cgrignore.write_text(encoding="utf-8", data="!vendor\n!node_modules\n")
 
         result = prompt_for_unignored_directories(tmp_path)
 
@@ -253,7 +260,7 @@ class TestNegationIntegration:
     ) -> None:
         (tmp_path / ".git").mkdir()
         cgrignore = tmp_path / CGRIGNORE_FILENAME
-        cgrignore.write_text("custom\n!vendor\n")
+        cgrignore.write_text(encoding="utf-8", data="custom\n!vendor\n")
         mock_ask.return_value = "all"
 
         result = prompt_for_unignored_directories(tmp_path)
@@ -261,3 +268,137 @@ class TestNegationIntegration:
         assert "vendor" in result
         assert ".git" in result
         assert "custom" in result
+
+
+@pytest.fixture
+def mock_memgraph_connect() -> Generator[MagicMock, None, None]:
+    with patch("codebase_rag.cli.connect_memgraph") as mock_connect:
+        mock_ingestor = MagicMock()
+        mock_connect.return_value.__enter__ = MagicMock(return_value=mock_ingestor)
+        mock_connect.return_value.__exit__ = MagicMock(return_value=False)
+        yield mock_connect
+
+
+class TestCgrignoreLoadedWithoutInteractiveSetup:
+    runner = CliRunner()
+
+    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
+    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    def test_start_loads_cgrignore_without_interactive_setup(
+        self,
+        mock_load_cgrignore: MagicMock,
+        mock_load_parsers: MagicMock,
+        mock_graph_updater: MagicMock,
+        mock_memgraph_connect: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        cgrignore_patterns = CgrignorePatterns(
+            exclude=frozenset({"vendor", "build"}),
+            unignore=frozenset({"vendor/important"}),
+        )
+        mock_load_cgrignore.return_value = cgrignore_patterns
+
+        result = self.runner.invoke(
+            app,
+            ["start", "--update-graph", "--repo-path", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        mock_load_cgrignore.assert_called_once_with(tmp_path)
+        updater_kwargs = mock_graph_updater.call_args.kwargs
+        assert updater_kwargs["unignore_paths"] == frozenset({"vendor/important"})
+        assert "vendor" in updater_kwargs["exclude_paths"]
+        assert "build" in updater_kwargs["exclude_paths"]
+
+    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
+    @patch("codebase_rag.cli.ProtobufFileIngestor")
+    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    def test_index_loads_cgrignore_without_interactive_setup(
+        self,
+        mock_load_cgrignore: MagicMock,
+        mock_proto_ingestor: MagicMock,
+        mock_load_parsers: MagicMock,
+        mock_graph_updater: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        cgrignore_patterns = CgrignorePatterns(
+            exclude=frozenset({"dist"}),
+            unignore=frozenset({"dist/assets"}),
+        )
+        mock_load_cgrignore.return_value = cgrignore_patterns
+
+        output_dir = str(tmp_path / "output")
+
+        result = self.runner.invoke(
+            app,
+            ["index", "--repo-path", str(tmp_path), "-o", output_dir],
+        )
+
+        assert result.exit_code == 0, result.output
+        mock_load_cgrignore.assert_called_once_with(tmp_path)
+        updater_kwargs = mock_graph_updater.call_args.kwargs
+        assert updater_kwargs["unignore_paths"] == frozenset({"dist/assets"})
+        assert "dist" in updater_kwargs["exclude_paths"]
+
+    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
+    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    def test_start_merges_cli_excludes_with_cgrignore(
+        self,
+        mock_load_cgrignore: MagicMock,
+        mock_load_parsers: MagicMock,
+        mock_graph_updater: MagicMock,
+        mock_memgraph_connect: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        cgrignore_patterns = CgrignorePatterns(
+            exclude=frozenset({"from_cgrignore"}),
+            unignore=frozenset(),
+        )
+        mock_load_cgrignore.return_value = cgrignore_patterns
+
+        result = self.runner.invoke(
+            app,
+            [
+                "start",
+                "--update-graph",
+                "--repo-path",
+                str(tmp_path),
+                "--exclude",
+                "from_cli",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        updater_kwargs = mock_graph_updater.call_args.kwargs
+        assert "from_cgrignore" in updater_kwargs["exclude_paths"]
+        assert "from_cli" in updater_kwargs["exclude_paths"]
+
+    @patch("codebase_rag.cli.prompt_for_unignored_directories")
+    @patch("codebase_rag.cli.GraphUpdater")
+    @patch("codebase_rag.cli.load_parsers", return_value=({}, {}))
+    @patch("codebase_rag.cli.load_cgrignore_patterns")
+    def test_start_does_not_prompt_without_interactive_setup(
+        self,
+        mock_load_cgrignore: MagicMock,
+        mock_load_parsers: MagicMock,
+        mock_graph_updater: MagicMock,
+        mock_prompt: MagicMock,
+        mock_memgraph_connect: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_load_cgrignore.return_value = CgrignorePatterns(
+            exclude=frozenset({"vendor"}),
+            unignore=frozenset({"vendor/keep"}),
+        )
+
+        result = self.runner.invoke(
+            app,
+            ["start", "--update-graph", "--repo-path", str(tmp_path)],
+        )
+
+        assert result.exit_code == 0, result.output
+        mock_prompt.assert_not_called()
+        mock_load_cgrignore.assert_called_once()

@@ -42,7 +42,7 @@ def _is_tool_available(tool_name: str) -> bool:
         subprocess.CalledProcessError,
     ):
         _EXTERNAL_TOOLS[tool_name] = False
-        logger.debug(ls.IMP_TOOL_NOT_AVAILABLE.format(tool=tool_name))
+        logger.debug(ls.IMP_TOOL_NOT_AVAILABLE, tool=tool_name)
         return False
 
 
@@ -77,9 +77,9 @@ def load_persistent_cache() -> None:
                 data = json.load(f)
                 _STDLIB_CACHE.update(data.get(cs.IMPORT_CACHE_KEY, {}))
                 _CACHE_TIMESTAMPS.update(data.get(cs.IMPORT_TIMESTAMPS_KEY, {}))
-            logger.debug(ls.IMP_CACHE_LOADED.format(path=cache_file))
+            logger.debug(ls.IMP_CACHE_LOADED, path=cache_file)
     except (json.JSONDecodeError, OSError) as e:
-        logger.debug(ls.IMP_CACHE_LOAD_ERROR.format(error=e))
+        logger.debug(ls.IMP_CACHE_LOAD_ERROR, error=e)
 
 
 def save_persistent_cache() -> None:
@@ -88,7 +88,7 @@ def save_persistent_cache() -> None:
         cache_dir.mkdir(parents=True, exist_ok=True)
         cache_file = cache_dir / cs.IMPORT_CACHE_FILE
 
-        with cache_file.open("w") as f:
+        with cache_file.open("w", encoding="utf-8") as f:
             json.dump(
                 {
                     cs.IMPORT_CACHE_KEY: _STDLIB_CACHE,
@@ -97,9 +97,9 @@ def save_persistent_cache() -> None:
                 f,
                 indent=2,
             )
-        logger.debug(ls.IMP_CACHE_SAVED.format(path=cache_file))
+        logger.debug(ls.IMP_CACHE_SAVED, path=cache_file)
     except OSError as e:
-        logger.debug(ls.IMP_CACHE_SAVE_ERROR.format(error=e))
+        logger.debug(ls.IMP_CACHE_SAVE_ERROR, error=e)
 
 
 def flush_stdlib_cache() -> None:
@@ -115,7 +115,7 @@ def clear_stdlib_cache() -> None:
             cache_file.unlink()
             logger.debug(ls.IMP_CACHE_CLEARED)
     except OSError as e:
-        logger.debug(ls.IMP_CACHE_CLEAR_ERROR.format(error=e))
+        logger.debug(ls.IMP_CACHE_CLEAR_ERROR, error=e)
 
 
 def get_stdlib_cache_stats() -> StdlibCacheStats:
@@ -130,11 +130,17 @@ def get_stdlib_cache_stats() -> StdlibCacheStats:
 
 
 class StdlibExtractor:
+    __slots__ = ("function_registry", "repo_path", "project_name")
+
     def __init__(
         self,
         function_registry: FunctionRegistryTrieProtocol | None = None,
+        repo_path: Path | None = None,
+        project_name: str | None = None,
     ) -> None:
         self.function_registry = function_registry
+        self.repo_path = repo_path
+        self.project_name = project_name
 
     def extract_module_path(
         self,
@@ -167,13 +173,16 @@ class StdlibExtractor:
                 return self._extract_generic_stdlib_path(full_qualified_name)
 
     def _extract_python_stdlib_path(self, full_qualified_name: str) -> str:
+        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
+        if len(parts) >= 3:
+            return self._resolve_python_entity_module_path(parts, full_qualified_name)
+
         cached_result = _get_cached_stdlib_result(
             cs.SupportedLanguage.PYTHON, full_qualified_name
         )
         if cached_result is not None:
             return cached_result
 
-        parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             return self._resolve_python_entity_module_path(parts, full_qualified_name)
         return full_qualified_name
@@ -183,6 +192,40 @@ class StdlibExtractor:
     ) -> str:
         module_name = parts[0]
         entity_name = parts[-1]
+
+        if len(parts) >= 3 and self.repo_path and self.project_name:
+            try:
+                import importlib
+
+                importlib.import_module(module_name)
+            except ImportError:
+                if (
+                    self.function_registry
+                    and full_qualified_name in self.function_registry
+                ):
+                    module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+                    _cache_stdlib_result(
+                        cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
+                    )
+                    return module_path
+
+                if parts[0] == self.project_name:
+                    relative_parts = parts[1:]
+                    module_file = (
+                        self.repo_path
+                        / Path(*relative_parts[:-1])
+                        / f"{relative_parts[-1]}.py"
+                    )
+                    module_init = self.repo_path / Path(*relative_parts) / "__init__.py"
+
+                    if module_file.exists() or module_init.exists():
+                        return full_qualified_name
+
+                module_path = cs.SEPARATOR_DOT.join(parts[:-1])
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.PYTHON, full_qualified_name, module_path
+                )
+                return module_path
 
         try:
             import importlib
@@ -207,7 +250,7 @@ class StdlibExtractor:
 
         result = (
             cs.SEPARATOR_DOT.join(parts[:-1])
-            if entity_name[0].isupper()
+            if entity_name[:1].isupper()
             else full_qualified_name
         )
         _cache_stdlib_result(cs.SupportedLanguage.PYTHON, full_qualified_name, result)
@@ -289,11 +332,7 @@ class StdlibExtractor:
             ):
                 pass
 
-        result = (
-            cs.SEPARATOR_DOT.join(parts[:-1])
-            if entity_name[0].isupper()
-            else full_qualified_name
-        )
+        result = cs.SEPARATOR_DOT.join(parts[:-1])
         _cache_stdlib_result(cs.SupportedLanguage.JS, full_qualified_name, result)
         return result
 
@@ -423,7 +462,7 @@ func main() {
                 pass
 
             entity_name = parts[-1]
-            if entity_name[0].isupper():
+            if entity_name[:1].isupper():
                 return cs.SEPARATOR_SLASH.join(parts[:-1])
 
         return full_qualified_name
@@ -434,7 +473,7 @@ func main() {
             entity_name = parts[-1]
 
             if (
-                entity_name[0].isupper()
+                entity_name[:1].isupper()
                 or entity_name.isupper()
                 or (cs.CHAR_UNDERSCORE not in entity_name and entity_name.islower())
             ):
@@ -500,7 +539,7 @@ int main() {{
 
                 entity_name = parts[-1]
                 if (
-                    entity_name[0].isupper()
+                    entity_name[:1].isupper()
                     or entity_name.startswith(cs.CPP_PREFIX_IS)
                     or entity_name.startswith(cs.CPP_PREFIX_HAS)
                     or entity_name in cs.CPP_STDLIB_ENTITIES
@@ -510,132 +549,45 @@ int main() {{
         return full_qualified_name
 
     def _extract_java_stdlib_path(self, full_qualified_name: str) -> str:
+        cached_result = _get_cached_stdlib_result(
+            cs.SupportedLanguage.JAVA, full_qualified_name
+        )
+        if cached_result is not None:
+            return cached_result
+
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
-            try:
-                import os
-                import subprocess
-                import tempfile
-
-                package_name = cs.SEPARATOR_DOT.join(parts[:-1])
-                entity_name = parts[-1]
-
-                java_program = """
-import java.lang.reflect.*;
-
-public class StdlibCheck {
-    public static void main(String[] args) {
-        if (args.length < 2) {
-            System.out.println("{\\"hasEntity\\": false}");
-            return;
-        }
-
-        String packageName = args[0];
-        String entityName = args[1];
-
-        try {
-            Class<?> clazz = Class.forName(packageName + "." + entityName);
-            System.out.println("{\\"hasEntity\\": true, \\"entityType\\": \\"class\\"}");
-        } catch (ClassNotFoundException e) {
-            // Try as method or field in parent package
-            try {
-                Class<?> packageClass = Class.forName(packageName);
-                Method[] methods = packageClass.getMethods();
-                Field[] fields = packageClass.getFields();
-
-                boolean foundMethod = false;
-                for (Method method : methods) {
-                    if (method.getName().equals(entityName)) {
-                        foundMethod = true;
-                        break;
-                    }
-                }
-
-                boolean foundField = false;
-                for (Field field : fields) {
-                    if (field.getName().equals(entityName)) {
-                        foundField = true;
-                        break;
-                    }
-                }
-
-                if (foundMethod || foundField) {
-                    System.out.println("{\\"hasEntity\\": true, \\"entityType\\": \\"member\\"}");
-                } else {
-                    System.out.println("{\\"hasEntity\\": false}");
-                }
-            } catch (Exception ex) {
-                System.out.println("{\\"hasEntity\\": false}");
-            }
-        }
-    }
-}
-                """
-
-                with tempfile.NamedTemporaryFile(
-                    mode="w", suffix=".java", delete=False
-                ) as f:
-                    f.write(java_program)
-                    java_file = f.name
-
-                try:
-                    compile_result = subprocess.run(
-                        ["javac", java_file],
-                        check=False,
-                        capture_output=True,
-                        text=True,
-                        timeout=10,
-                    )
-
-                    if compile_result.returncode == 0:
-                        class_name = os.path.splitext(os.path.basename(java_file))[0]
-                        run_result = subprocess.run(
-                            [
-                                "java",
-                                "-cp",
-                                os.path.dirname(java_file),
-                                class_name,
-                                package_name,
-                                entity_name,
-                            ],
-                            check=False,
-                            capture_output=True,
-                            text=True,
-                            timeout=10,
-                        )
-
-                        if run_result.returncode == 0:
-                            data = json.loads(run_result.stdout.strip())
-                            if data.get(cs.JSON_KEY_HAS_ENTITY):
-                                return cs.SEPARATOR_DOT.join(parts[:-1])
-
-                finally:
-                    for ext in (cs.EXT_JAVA, cs.EXT_CLASS):
-                        temp_file = os.path.splitext(java_file)[0] + ext
-                        try:
-                            os.unlink(temp_file)
-                        except OSError:
-                            pass
-
-            except (
-                subprocess.TimeoutExpired,
-                subprocess.CalledProcessError,
-                json.JSONDecodeError,
-                OSError,
-            ):
-                pass
-
             entity_name = parts[-1]
-            if (
-                entity_name[0].isupper()
+            is_class_entity = (
+                entity_name[:1].isupper()
                 or entity_name.endswith(cs.JAVA_SUFFIX_EXCEPTION)
                 or entity_name.endswith(cs.JAVA_SUFFIX_ERROR)
                 or entity_name.endswith(cs.JAVA_SUFFIX_INTERFACE)
                 or entity_name.endswith(cs.JAVA_SUFFIX_BUILDER)
                 or entity_name in cs.JAVA_STDLIB_CLASSES
-            ):
-                return cs.SEPARATOR_DOT.join(parts[:-1])
+            )
 
+            if full_qualified_name.startswith(cs.JAVA_STDLIB_PREFIXES):
+                result = (
+                    cs.SEPARATOR_DOT.join(parts[:-1])
+                    if is_class_entity
+                    else full_qualified_name
+                )
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.JAVA, full_qualified_name, result
+                )
+                return result
+
+            if is_class_entity:
+                result = cs.SEPARATOR_DOT.join(parts[:-1])
+                _cache_stdlib_result(
+                    cs.SupportedLanguage.JAVA, full_qualified_name, result
+                )
+                return result
+
+        _cache_stdlib_result(
+            cs.SupportedLanguage.JAVA, full_qualified_name, full_qualified_name
+        )
         return full_qualified_name
 
     def _extract_lua_stdlib_path(self, full_qualified_name: str) -> str:
@@ -709,7 +661,7 @@ end
                 pass
 
             entity_name = parts[-1]
-            if entity_name[0].isupper() or entity_name in cs.LUA_STDLIB_MODULES:
+            if entity_name[:1].isupper() or entity_name in cs.LUA_STDLIB_MODULES:
                 return cs.SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name
@@ -718,7 +670,7 @@ end
         parts = full_qualified_name.split(cs.SEPARATOR_DOT)
         if len(parts) >= 2:
             entity_name = parts[-1]
-            if entity_name[0].isupper():
+            if entity_name[:1].isupper():
                 return cs.SEPARATOR_DOT.join(parts[:-1])
 
         return full_qualified_name

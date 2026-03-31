@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from loguru import logger
@@ -29,6 +30,15 @@ class FunctionCapturesResult(NamedTuple):
     captures: dict[str, list[ASTNode]]
 
 
+def sorted_captures(cursor: QueryCursor, node: ASTNode) -> dict[str, list[ASTNode]]:
+    # (H) tree-sitter v0.25 captures() returns nodes in non-deterministic order
+    # across process invocations; sort by start_byte for reproducibility
+    raw = cursor.captures(node)
+    return {
+        name: sorted(nodes, key=lambda n: n.start_byte) for name, nodes in raw.items()
+    }
+
+
 def get_function_captures(
     root_node: ASTNode,
     language: cs.SupportedLanguage,
@@ -41,11 +51,11 @@ def get_function_captures(
         return None
 
     cursor = QueryCursor(query)
-    captures = cursor.captures(root_node)
+    captures = sorted_captures(cursor, root_node)
     return FunctionCapturesResult(lang_config, captures)
 
 
-@lru_cache(maxsize=10000)
+@lru_cache(maxsize=50000)
 def _cached_decode_bytes(text_bytes: bytes) -> str:
     return text_bytes.decode(cs.ENCODING_UTF8)
 
@@ -83,6 +93,8 @@ def ingest_method(
     language: cs.SupportedLanguage | None = None,
     extract_decorators_func: Callable[[ASTNode], list[str]] | None = None,
     method_qualified_name: str | None = None,
+    file_path: Path | None = None,
+    repo_path: Path | None = None,
 ) -> None:
     if language == cs.SupportedLanguage.CPP:
         from .cpp import utils as cpp_utils
@@ -109,6 +121,9 @@ def ingest_method(
         cs.KEY_END_LINE: method_node.end_point[0] + 1,
         cs.KEY_DOCSTRING: get_docstring_func(method_node),
     }
+    if file_path is not None and repo_path is not None:
+        method_props[cs.KEY_PATH] = file_path.relative_to(repo_path).as_posix()
+        method_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
 
     logger.info(logs.METHOD_FOUND.format(name=method_name, qn=method_qn))
     ingestor.ensure_node_batch(cs.NodeLabel.METHOD, method_props)
@@ -162,6 +177,11 @@ def is_method_node(func_node: ASTNode, lang_config: LanguageSpec) -> bool:
         return False
 
     while current and current.type not in lang_config.module_node_types:
+        if (
+            current.type in lang_config.function_node_types
+            and current.child_by_field_name(cs.FIELD_BODY) is not None
+        ):
+            return False
         if current.type in lang_config.class_node_types:
             return True
         current = current.parent

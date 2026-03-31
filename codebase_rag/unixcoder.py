@@ -1,6 +1,6 @@
-# Adapted from https://github.com/microsoft/unixcoder
-# Copyright (c) Microsoft Corporation.
-# Licensed under the MIT license.
+# (H) Adapted from https://github.com/microsoft/unixcoder
+# (H) Copyright (c) Microsoft Corporation.
+# (H) Licensed under the MIT license.
 
 import torch
 from torch import nn
@@ -190,6 +190,17 @@ class UniXcoder(nn.Module):
 
 
 class Beam:
+    __slots__ = (
+        "_eos",
+        "device",
+        "eosTop",
+        "finished",
+        "nextYs",
+        "prevKs",
+        "scores",
+        "size",
+    )
+
     def __init__(self, size: int, eos: int, device: torch.device) -> None:
         self.size = size
         self.device = device

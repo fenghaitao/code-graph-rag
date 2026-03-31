@@ -51,6 +51,11 @@ LIMIT {CYPHER_DEFAULT_LIMIT}"""
 
 CYPHER_EXAMPLE_LIMIT_ONE = """MATCH (f:File) RETURN f.path as path, f.name as name, labels(f) as type LIMIT 1"""
 
+CYPHER_EXAMPLE_CLASS_METHODS = f"""MATCH (c:Class)-[:DEFINES_METHOD]->(m:Method)
+WHERE c.name = 'UserService'
+RETURN c.name AS className, m.name AS methodName, m.qualified_name AS qualified_name, labels(m) AS type
+LIMIT {CYPHER_DEFAULT_LIMIT}"""
+
 CYPHER_EXPORT_NODES = """
 MATCH (n)
 RETURN id(n) as node_id, labels(n) as labels, properties(n) as properties
@@ -79,6 +84,19 @@ LIMIT 1
 """
 
 
+CYPHER_STATS_NODE_COUNTS = """
+MATCH (n)
+RETURN labels(n) AS labels, count(*) AS count
+ORDER BY count DESC
+"""
+
+CYPHER_STATS_RELATIONSHIP_COUNTS = """
+MATCH ()-[r]->()
+RETURN type(r) AS type, count(*) AS count
+ORDER BY count DESC
+"""
+
+
 def wrap_with_unwind(query: str) -> str:
     return f"UNWIND $batch AS row\n{query}"
 
@@ -98,6 +116,10 @@ def build_constraint_query(label: str, prop: str) -> str:
     return f"CREATE CONSTRAINT ON (n:{label}) ASSERT n.{prop} IS UNIQUE;"
 
 
+def build_index_query(label: str, prop: str) -> str:
+    return f"CREATE INDEX ON :{label}({prop});"
+
+
 def build_merge_node_query(label: str, id_key: str) -> str:
     return f"MERGE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
 
@@ -114,6 +136,27 @@ def build_merge_relationship_query(
         f"MATCH (a:{from_label} {{{from_key}: row.from_val}}), "
         f"(b:{to_label} {{{to_key}: row.to_val}})\n"
         f"MERGE (a)-[r:{rel_type}]->(b)\n"
+    )
+    query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
+    return query
+
+
+def build_create_node_query(label: str, id_key: str) -> str:
+    return f"CREATE (n:{label} {{{id_key}: row.id}})\nSET n += row.props"
+
+
+def build_create_relationship_query(
+    from_label: str,
+    from_key: str,
+    rel_type: str,
+    to_label: str,
+    to_key: str,
+    has_props: bool = False,
+) -> str:
+    query = (
+        f"MATCH (a:{from_label} {{{from_key}: row.from_val}}), "
+        f"(b:{to_label} {{{to_key}: row.to_val}})\n"
+        f"CREATE (a)-[r:{rel_type}]->(b)\n"
     )
     query += CYPHER_SET_PROPS_RETURN_COUNT if has_props else CYPHER_RETURN_COUNT
     return query

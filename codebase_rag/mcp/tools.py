@@ -1,7 +1,11 @@
+import asyncio
 import itertools
+import sys
 from pathlib import Path
 
 from loguru import logger
+from pydantic_ai import Agent
+from rich.console import Console
 
 from codebase_rag import constants as cs
 from codebase_rag import logs as lg
@@ -10,17 +14,25 @@ from codebase_rag.graph_updater import GraphUpdater
 from codebase_rag.models import ToolMetadata
 from codebase_rag.parser_loader import load_parsers
 from codebase_rag.services.graph_service import MemgraphIngestor
-from codebase_rag.services.llm import CypherGenerator
+from codebase_rag.services.llm import CypherGenerator, create_rag_orchestrator
 from codebase_rag.tools import tool_descriptions as td
-from codebase_rag.tools.code_retrieval import CodeRetriever, create_code_retrieval_tool
+from codebase_rag.tools.code_retrieval import (
+    CodeRetriever,
+    create_code_retrieval_tool,
+)
 from codebase_rag.tools.codebase_query import create_query_tool
 from codebase_rag.tools.directory_lister import (
     DirectoryLister,
     create_directory_lister_tool,
 )
+from codebase_rag.tools.document_analyzer import (
+    DocumentAnalyzer,
+    create_document_analyzer_tool,
+)
 from codebase_rag.tools.file_editor import FileEditor, create_file_editor_tool
 from codebase_rag.tools.file_reader import FileReader, create_file_reader_tool
 from codebase_rag.tools.file_writer import FileWriter, create_file_writer_tool
+from codebase_rag.tools.shell_command import ShellCommander, create_shell_command_tool
 from codebase_rag.types_defs import (
     CodeSnippetResultDict,
     DeleteProjectErrorResult,
@@ -35,6 +47,8 @@ from codebase_rag.types_defs import (
     MCPToolSchema,
     QueryResultDict,
 )
+from codebase_rag.utils.dependencies import has_semantic_dependencies
+from codebase_rag.vector_store import delete_project_embeddings
 
 
 class MCPToolsRegistry:
@@ -47,6 +61,7 @@ class MCPToolsRegistry:
         self.project_root = project_root
         self.ingestor = ingestor
         self.cypher_gen = cypher_gen
+        self._ingestor_lock = asyncio.Lock()
 
         self.parsers, self.queries = load_parsers()
 
@@ -55,9 +70,12 @@ class MCPToolsRegistry:
         self.file_reader = FileReader(project_root=project_root)
         self.file_writer = FileWriter(project_root=project_root)
         self.directory_lister = DirectoryLister(project_root=project_root)
+        self.shell_commander = ShellCommander(project_root=project_root)
+        self.document_analyzer = DocumentAnalyzer(project_root=project_root)
 
+        stderr_console = Console(file=sys.stderr, width=None, force_terminal=True)
         self._query_tool = create_query_tool(
-            ingestor=ingestor, cypher_gen=cypher_gen, console=None
+            ingestor=ingestor, cypher_gen=cypher_gen, console=stderr_console
         )
         self._code_tool = create_code_retrieval_tool(code_retriever=self.code_retriever)
         self._file_editor_tool = create_file_editor_tool(file_editor=self.file_editor)
@@ -66,6 +84,27 @@ class MCPToolsRegistry:
         self._directory_lister_tool = create_directory_lister_tool(
             directory_lister=self.directory_lister
         )
+        self._shell_command_tool = create_shell_command_tool(
+            shell_commander=self.shell_commander
+        )
+        self._document_analyzer_tool = create_document_analyzer_tool(
+            self.document_analyzer
+        )
+
+        self._rag_agent: Agent | None = None
+
+        self._semantic_search_tool = None
+        self._semantic_search_available = False
+
+        if has_semantic_dependencies():
+            from codebase_rag.tools.semantic_search import (
+                create_semantic_search_tool,
+            )
+
+            self._semantic_search_tool = create_semantic_search_tool()
+            self._semantic_search_available = True
+        else:
+            logger.info(lg.MCP_SEMANTIC_NOT_AVAILABLE)
 
         self._tools: dict[str, ToolMetadata] = {
             cs.MCPToolName.LIST_PROJECTS: ToolMetadata(
@@ -120,6 +159,17 @@ class MCPToolsRegistry:
                     required=[],
                 ),
                 handler=self.index_repository,
+                returns_json=False,
+            ),
+            cs.MCPToolName.UPDATE_REPOSITORY: ToolMetadata(
+                name=cs.MCPToolName.UPDATE_REPOSITORY,
+                description=td.MCP_TOOLS[cs.MCPToolName.UPDATE_REPOSITORY],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={},
+                    required=[],
+                ),
+                handler=self.update_repository,
                 returns_json=False,
             ),
             cs.MCPToolName.QUERY_CODE_GRAPH: ToolMetadata(
@@ -247,33 +297,121 @@ class MCPToolsRegistry:
                 returns_json=False,
             ),
         }
+        if self._semantic_search_available:
+            self._tools[cs.MCPToolName.SEMANTIC_SEARCH] = ToolMetadata(
+                name=cs.MCPToolName.SEMANTIC_SEARCH,
+                description=td.MCP_TOOLS[cs.MCPToolName.SEMANTIC_SEARCH],
+                input_schema=MCPInputSchema(
+                    type=cs.MCPSchemaType.OBJECT,
+                    properties={
+                        cs.MCPParamName.NATURAL_LANGUAGE_QUERY: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.STRING,
+                            description=td.MCP_PARAM_NATURAL_LANGUAGE_QUERY,
+                        ),
+                        cs.MCPParamName.TOP_K: MCPInputSchemaProperty(
+                            type=cs.MCPSchemaType.INTEGER,
+                            description=td.MCP_PARAM_TOP_K,
+                            default=5,
+                        ),
+                    },
+                    required=[cs.MCPParamName.NATURAL_LANGUAGE_QUERY],
+                ),
+                handler=self.semantic_search,
+                returns_json=False,
+            )
+
+        self._tools[cs.MCPToolName.ASK_AGENT] = ToolMetadata(
+            name=cs.MCPToolName.ASK_AGENT,
+            description=td.MCP_TOOLS[cs.MCPToolName.ASK_AGENT],
+            input_schema=MCPInputSchema(
+                type=cs.MCPSchemaType.OBJECT,
+                properties={
+                    cs.MCPParamName.QUESTION: MCPInputSchemaProperty(
+                        type=cs.MCPSchemaType.STRING,
+                        description=td.MCP_PARAM_QUESTION,
+                    )
+                },
+                required=[cs.MCPParamName.QUESTION],
+            ),
+            handler=self.ask_agent,
+            returns_json=True,
+        )
+
+    @property
+    def rag_agent(self) -> Agent:
+        if self._rag_agent is None:
+            from codebase_rag.tools.semantic_search import (
+                create_get_function_source_tool,
+            )
+
+            tools = [
+                self._query_tool,
+                self._code_tool,
+                self._file_reader_tool,
+                self._file_writer_tool,
+                self._file_editor_tool,
+                self._shell_command_tool,
+                self._directory_lister_tool,
+                self._document_analyzer_tool,
+                create_get_function_source_tool(),
+            ]
+            if self._semantic_search_tool is not None:
+                tools.append(self._semantic_search_tool)
+            self._rag_agent = create_rag_orchestrator(tools=tools)
+        return self._rag_agent
+
+    # (H) Setter allows tests to inject a mock agent without triggering LLM init
+    @rag_agent.setter
+    def rag_agent(self, value: Agent) -> None:
+        self._rag_agent = value
 
     async def list_projects(self) -> ListProjectsResult:
         logger.info(lg.MCP_LISTING_PROJECTS)
         try:
-            projects = self.ingestor.list_projects()
+            projects = await asyncio.to_thread(self.ingestor.list_projects)
             return ListProjectsSuccessResult(projects=projects, count=len(projects))
         except Exception as e:
             logger.error(lg.MCP_ERROR_LIST_PROJECTS.format(error=e))
             return ListProjectsErrorResult(error=str(e), projects=[], count=0)
 
+    def _get_project_node_ids(self, project_name: str) -> list[int]:
+        rows = self.ingestor.fetch_all(
+            cs.CYPHER_QUERY_PROJECT_NODE_IDS,
+            {cs.KEY_PROJECT_NAME: project_name},
+        )
+        result: list[int] = []
+        for row in rows:
+            node_id = row.get(cs.KEY_NODE_ID)
+            if isinstance(node_id, int):
+                result.append(node_id)
+        return result
+
+    def _cleanup_project_embeddings(self, project_name: str) -> None:
+        node_ids = self._get_project_node_ids(project_name)
+        delete_project_embeddings(project_name, node_ids)
+
+    def _delete_project_sync(self, project_name: str) -> DeleteProjectResult:
+        projects = self.ingestor.list_projects()
+        if project_name not in projects:
+            return DeleteProjectErrorResult(
+                success=False,
+                error=te.MCP_PROJECT_NOT_FOUND.format(
+                    project_name=project_name, projects=projects
+                ),
+            )
+        self._cleanup_project_embeddings(project_name)
+        self.ingestor.delete_project(project_name)
+        return DeleteProjectSuccessResult(
+            success=True,
+            project=project_name,
+            message=cs.MCP_PROJECT_DELETED.format(project_name=project_name),
+        )
+
     async def delete_project(self, project_name: str) -> DeleteProjectResult:
         logger.info(lg.MCP_DELETING_PROJECT.format(project_name=project_name))
         try:
-            projects = self.ingestor.list_projects()
-            if project_name not in projects:
-                return DeleteProjectErrorResult(
-                    success=False,
-                    error=te.MCP_PROJECT_NOT_FOUND.format(
-                        project_name=project_name, projects=projects
-                    ),
-                )
-            self.ingestor.delete_project(project_name)
-            return DeleteProjectSuccessResult(
-                success=True,
-                project=project_name,
-                message=cs.MCP_PROJECT_DELETED.format(project_name=project_name),
-            )
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._delete_project_sync, project_name)
         except Exception as e:
             logger.error(lg.MCP_ERROR_DELETE_PROJECT.format(error=e))
             return DeleteProjectErrorResult(success=False, error=str(e))
@@ -283,33 +421,75 @@ class MCPToolsRegistry:
             return cs.MCP_WIPE_CANCELLED
         logger.warning(lg.MCP_WIPING_DATABASE)
         try:
-            self.ingestor.clean_database()
+            async with self._ingestor_lock:
+                await asyncio.to_thread(self.ingestor.clean_database)
             return cs.MCP_WIPE_SUCCESS
         except Exception as e:
             logger.error(lg.MCP_ERROR_WIPE.format(error=e))
             return cs.MCP_WIPE_ERROR.format(error=e)
 
+    def _index_repository_sync(self) -> str:
+        project_name = Path(self.project_root).resolve().name
+        logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
+        self._cleanup_project_embeddings(project_name)
+        self.ingestor.delete_project(project_name)
+
+        updater = GraphUpdater(
+            ingestor=self.ingestor,
+            repo_path=Path(self.project_root),
+            parsers=self.parsers,
+            queries=self.queries,
+        )
+        updater.run()
+
+        return cs.MCP_INDEX_SUCCESS_PROJECT.format(
+            path=self.project_root, project_name=project_name
+        )
+
     async def index_repository(self) -> str:
         logger.info(lg.MCP_INDEXING_REPO.format(path=self.project_root))
-        project_name = Path(self.project_root).resolve().name
         try:
-            logger.info(lg.MCP_CLEARING_PROJECT.format(project_name=project_name))
-            self.ingestor.delete_project(project_name)
-
-            updater = GraphUpdater(
-                ingestor=self.ingestor,
-                repo_path=Path(self.project_root),
-                parsers=self.parsers,
-                queries=self.queries,
-            )
-            updater.run()
-
-            return cs.MCP_INDEX_SUCCESS_PROJECT.format(
-                path=self.project_root, project_name=project_name
-            )
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._index_repository_sync)
         except Exception as e:
             logger.error(lg.MCP_ERROR_INDEXING.format(error=e))
             return cs.MCP_INDEX_ERROR.format(error=e)
+
+    def _update_repository_sync(self) -> str:
+        updater = GraphUpdater(
+            ingestor=self.ingestor,
+            repo_path=Path(self.project_root),
+            parsers=self.parsers,
+            queries=self.queries,
+        )
+        updater.run()
+        return cs.MCP_UPDATE_SUCCESS.format(path=self.project_root)
+
+    async def update_repository(self) -> str:
+        logger.info(lg.MCP_UPDATING_REPO.format(path=self.project_root))
+        try:
+            async with self._ingestor_lock:
+                return await asyncio.to_thread(self._update_repository_sync)
+        except Exception as e:
+            logger.error(lg.MCP_ERROR_UPDATING.format(error=e))
+            return cs.MCP_UPDATE_ERROR.format(error=e)
+
+    async def semantic_search(self, natural_language_query: str, top_k: int = 5) -> str:
+        assert self._semantic_search_tool is not None
+        logger.info(lg.MCP_SEMANTIC_SEARCH.format(query=natural_language_query))
+        result = await self._semantic_search_tool.function(
+            query=natural_language_query, top_k=top_k
+        )
+        return str(result)
+
+    async def ask_agent(self, question: str) -> dict[str, str]:
+        logger.info(lg.MCP_ASK_AGENT.format(question=question))
+        try:
+            response = await self.rag_agent.run(question, message_history=[])
+            return {"output": str(response.output)}
+        except Exception as e:
+            logger.error(lg.MCP_ASK_AGENT_ERROR.format(error=e))
+            return {"error": cs.MCP_ASK_AGENT_ERROR.format(error=e)}
 
     async def query_code_graph(self, natural_language_query: str) -> QueryResultDict:
         logger.info(lg.MCP_QUERY_CODE_GRAPH.format(query=natural_language_query))

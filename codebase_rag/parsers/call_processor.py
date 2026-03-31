@@ -14,10 +14,12 @@ from .call_resolver import CallResolver
 from .cpp import utils as cpp_utils
 from .import_processor import ImportProcessor
 from .type_inference import TypeInferenceEngine
-from .utils import get_function_captures, is_method_node
+from .utils import get_function_captures, is_method_node, sorted_captures
 
 
 class CallProcessor:
+    __slots__ = ("ingestor", "repo_path", "project_name", "_resolver")
+
     def __init__(
         self,
         ingestor: IngestorProtocol,
@@ -54,7 +56,7 @@ class CallProcessor:
         queries: dict[cs.SupportedLanguage, LanguageQueries],
     ) -> None:
         relative_path = file_path.relative_to(self.repo_path)
-        logger.debug(ls.CALL_PROCESSING_FILE.format(path=relative_path))
+        logger.debug(ls.CALL_PROCESSING_FILE, path=relative_path)
 
         try:
             module_qn = cs.SEPARATOR_DOT.join(
@@ -70,7 +72,7 @@ class CallProcessor:
             self._process_module_level_calls(root_node, module_qn, language, queries)
 
         except Exception as e:
-            logger.error(ls.CALL_PROCESSING_FAILED.format(path=file_path, error=e))
+            logger.error(ls.CALL_PROCESSING_FAILED, path=file_path, error=e)
 
     def _process_calls_in_functions(
         self,
@@ -141,12 +143,15 @@ class CallProcessor:
         if not method_query:
             return
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = sorted_captures(method_cursor, body_node)
         method_nodes = method_captures.get(cs.CAPTURE_FUNCTION, [])
         for method_node in method_nodes:
             if not isinstance(method_node, Node):
                 continue
-            method_name = self._get_node_name(method_node)
+            if language == cs.SupportedLanguage.CPP:
+                method_name = cpp_utils.extract_function_name(method_node)
+            else:
+                method_name = self._get_node_name(method_node)
             if not method_name:
                 continue
             method_qn = f"{class_qn}{cs.SEPARATOR_DOT}{method_name}"
@@ -171,7 +176,7 @@ class CallProcessor:
         if not query:
             return
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = sorted_captures(cursor, root_node)
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
 
         for class_node in class_nodes:
@@ -270,13 +275,14 @@ class CallProcessor:
         )
 
         cursor = QueryCursor(calls_query)
-        captures = cursor.captures(caller_node)
+        captures = sorted_captures(cursor, caller_node)
         call_nodes = captures.get(cs.CAPTURE_CALL, [])
 
         logger.debug(
-            ls.CALL_FOUND_NODES.format(
-                count=len(call_nodes), language=language, caller=caller_qn
-            )
+            ls.CALL_FOUND_NODES,
+            count=len(call_nodes),
+            language=language,
+            caller=caller_qn,
         )
 
         for call_node in call_nodes:
@@ -310,13 +316,21 @@ class CallProcessor:
                 callee_type, callee_qn = operator_info
             else:
                 continue
-            logger.debug(
-                ls.CALL_FOUND.format(
+            if callee_type == cs.NodeLabel.CLASS:
+                logger.debug(
+                    ls.CALL_SKIP_CLASS,
                     caller=caller_qn,
                     call_name=call_name,
-                    callee_type=callee_type,
                     callee_qn=callee_qn,
                 )
+                continue
+
+            logger.debug(
+                ls.CALL_FOUND,
+                caller=caller_qn,
+                call_name=call_name,
+                callee_type=callee_type,
+                callee_qn=callee_qn,
             )
 
             self.ingestor.ensure_relationship_batch(
@@ -337,9 +351,7 @@ class CallProcessor:
 
         if not isinstance(current, Node):
             logger.warning(
-                ls.CALL_UNEXPECTED_PARENT.format(
-                    node=func_node, parent_type=type(current)
-                )
+                ls.CALL_UNEXPECTED_PARENT, node=func_node, parent_type=type(current)
             )
             return None
 

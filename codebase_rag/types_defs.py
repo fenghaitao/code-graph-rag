@@ -81,20 +81,24 @@ type FunctionRegistry = dict[QualifiedName, NodeType]
 class FunctionRegistryTrieProtocol(Protocol):
     def __contains__(self, qualified_name: QualifiedName) -> bool: ...
     def __getitem__(self, qualified_name: QualifiedName) -> NodeType: ...
+
     def __setitem__(
         self, qualified_name: QualifiedName, func_type: NodeType
     ) -> None: ...
+
     def get(
         self, qualified_name: QualifiedName, default: NodeType | None = None
     ) -> NodeType | None: ...
     def keys(self) -> KeysView[QualifiedName]: ...
     def items(self) -> ItemsView[QualifiedName, NodeType]: ...
     def find_with_prefix(self, prefix: str) -> list[tuple[QualifiedName, NodeType]]: ...
+
     def find_ending_with(self, suffix: str) -> list[QualifiedName]: ...
 
 
 class ASTCacheProtocol(Protocol):
     def __setitem__(self, key: Path, value: tuple[Node, SupportedLanguage]) -> None: ...
+
     def __getitem__(self, key: Path) -> tuple[Node, SupportedLanguage]: ...
     def __delitem__(self, key: Path) -> None: ...
     def __contains__(self, key: Path) -> bool: ...
@@ -346,7 +350,7 @@ MCPToolArguments = dict[str, str | int | None]
 class MCPInputSchemaProperty(TypedDict, total=False):
     type: str
     description: str
-    default: str
+    default: str | int
 
 
 MCPInputSchemaProperties = dict[str, MCPInputSchemaProperty]
@@ -435,36 +439,47 @@ class RelationshipSchema(NamedTuple):
 NODE_SCHEMAS: tuple[NodeSchema, ...] = (
     NodeSchema(NodeLabel.PROJECT, "{name: string}"),
     NodeSchema(
-        NodeLabel.PACKAGE, "{qualified_name: string, name: string, path: string}"
+        NodeLabel.PACKAGE,
+        "{qualified_name: string, name: string, path: string, absolute_path: string}",
     ),
-    NodeSchema(NodeLabel.FOLDER, "{path: string, name: string}"),
-    NodeSchema(NodeLabel.FILE, "{path: string, name: string, extension: string}"),
+    NodeSchema(NodeLabel.FOLDER, "{path: string, name: string, absolute_path: string}"),
     NodeSchema(
-        NodeLabel.MODULE, "{qualified_name: string, name: string, path: string}"
+        NodeLabel.FILE,
+        "{path: string, name: string, extension: string, absolute_path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.MODULE,
+        "{qualified_name: string, name: string, path: string, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.CLASS,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.FUNCTION,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.METHOD,
-        "{qualified_name: string, name: string, decorators: list[string]}",
+        "{qualified_name: string, name: string, decorators: list[string], path: string, absolute_path: string}",
     ),
-    NodeSchema(NodeLabel.INTERFACE, "{qualified_name: string, name: string}"),
-    NodeSchema(NodeLabel.ENUM, "{qualified_name: string, name: string}"),
+    NodeSchema(
+        NodeLabel.INTERFACE,
+        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+    ),
+    NodeSchema(
+        NodeLabel.ENUM,
+        "{qualified_name: string, name: string, path: string, absolute_path: string}",
+    ),
     NodeSchema(NodeLabel.TYPE, "{qualified_name: string, name: string}"),
     NodeSchema(NodeLabel.UNION, "{qualified_name: string, name: string}"),
     NodeSchema(
         NodeLabel.MODULE_INTERFACE,
-        "{qualified_name: string, name: string, path: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string}",
     ),
     NodeSchema(
         NodeLabel.MODULE_IMPLEMENTATION,
-        "{qualified_name: string, name: string, path: string, implements_module: string}",
+        "{qualified_name: string, name: string, path: string, absolute_path: string, implements_module: string}",
     ),
     NodeSchema(NodeLabel.EXTERNAL_PACKAGE, "{name: string, version_spec: string}"),
 )

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 from unittest.mock import MagicMock
 
 import pytest
@@ -12,10 +15,21 @@ from watchdog.events import (
 from realtime_updater import CodeChangeEventHandler
 
 
+@runtime_checkable
+class _AnyProtocol(Protocol):
+    pass
+
+
+@pytest.fixture(autouse=True)
+def _bypass_protocol_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("realtime_updater.QueryProtocol", _AnyProtocol)
+
+
 @pytest.fixture
 def event_handler(mock_updater: MagicMock) -> CodeChangeEventHandler:
-    """Provides a CodeChangeEventHandler instance with a mocked updater."""
-    return CodeChangeEventHandler(mock_updater)
+    handler = CodeChangeEventHandler(mock_updater, debounce_seconds=0)
+    handler.ignore_patterns = handler.ignore_patterns - {"tmp", "temp"}
+    return handler
 
 
 def test_file_creation_flow(
@@ -23,12 +37,13 @@ def test_file_creation_flow(
 ) -> None:
     """Test that creating a new file triggers parsing and ingestion."""
     test_file = temp_repo / "new_file.py"
-    test_file.write_text("def new_func(): pass")
+    test_file.write_text(encoding="utf-8", data="def new_func(): pass")
     event = FileCreatedEvent(str(test_file))
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    assert mock_updater.ingestor.execute_write.call_count == 3
     mock_updater.factory.definition_processor.process_file.assert_called_once_with(
         test_file,
         "python",
@@ -48,7 +63,8 @@ def test_file_modification_flow(
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    assert mock_updater.ingestor.execute_write.call_count == 3
     mock_updater.factory.definition_processor.process_file.assert_called_once_with(
         test_file,
         "python",
@@ -67,7 +83,8 @@ def test_file_deletion_flow(
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    assert mock_updater.ingestor.execute_write.call_count == 3
     mock_updater.factory.definition_processor.process_file.assert_not_called()
     mock_updater.ingestor.flush_all.assert_called_once()
 
@@ -103,16 +120,22 @@ def test_directory_creation_is_ignored(
     mock_updater.ingestor.flush_all.assert_not_called()
 
 
-def test_unsupported_file_types_are_ignored(
+def test_non_code_files_create_file_nodes(
     event_handler: CodeChangeEventHandler, mock_updater: MagicMock, temp_repo: Path
 ) -> None:
-    """Test that changing an unsupported file type is ignored after deletion query."""
-    unsupported_file = temp_repo / "document.md"
-    unsupported_file.write_text("# Markdown file")
-    event = FileModifiedEvent(str(unsupported_file))
+    """Test that non-code files (like .md) create File nodes but skip AST parsing."""
+    non_code_file = temp_repo / "document.md"
+    non_code_file.write_text(encoding="utf-8", data="# Markdown file")
+    event = FileModifiedEvent(str(non_code_file))
 
     event_handler.dispatch(event)
 
-    assert mock_updater.ingestor.execute_write.call_count == 2
+    # (H) 3 execute_write calls: DELETE_MODULE, DELETE_FILE, DELETE_CALLS
+    assert mock_updater.ingestor.execute_write.call_count == 3
+    # (H) AST parsing is skipped for non-code files
     mock_updater.factory.definition_processor.process_file.assert_not_called()
+    # (H) But File node creation IS called for all file types
+    mock_updater.factory.structure_processor.process_generic_file.assert_called_once_with(
+        non_code_file, "document.md"
+    )
     mock_updater.ingestor.flush_all.assert_called_once()

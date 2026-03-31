@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Unpack
+from typing import TypedDict, Unpack
 
 from dotenv import load_dotenv
 from loguru import logger
-from pydantic import AnyHttpUrl, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from . import constants as cs
@@ -15,6 +16,81 @@ from . import logs
 from .types_defs import CgrignorePatterns, ModelConfigKwargs
 
 load_dotenv()
+
+
+class ApiKeyInfoEntry(TypedDict):
+    env_var: str
+    url: str
+    name: str
+
+
+API_KEY_INFO: dict[str, ApiKeyInfoEntry] = {
+    cs.Provider.OPENAI: {
+        "env_var": "OPENAI_API_KEY",
+        "url": "https://platform.openai.com/api-keys",
+        "name": "OpenAI",
+    },
+    cs.Provider.ANTHROPIC: {
+        "env_var": "ANTHROPIC_API_KEY",
+        "url": "https://console.anthropic.com/settings/keys",
+        "name": "Anthropic",
+    },
+    cs.Provider.GOOGLE: {
+        "env_var": "GOOGLE_API_KEY",
+        "url": "https://console.cloud.google.com/apis/credentials",
+        "name": "Google AI",
+    },
+    cs.Provider.AZURE: {
+        "env_var": "AZURE_API_KEY",
+        "url": "https://portal.azure.com/",
+        "name": "Azure OpenAI",
+    },
+}
+
+
+def format_missing_api_key_errors(
+    provider: str, role: str = cs.DEFAULT_MODEL_ROLE
+) -> str:
+    provider_lower = provider.lower()
+
+    if provider_lower in API_KEY_INFO:
+        info = API_KEY_INFO[provider_lower]
+        env_var = info["env_var"]
+        url = info["url"]
+        name = info["name"]
+    else:
+        env_var = f"{provider.upper()}_API_KEY"
+        url = f"your {provider} provider's website"
+        name = provider.capitalize()
+
+    role_msg = f" for {role}" if role != cs.DEFAULT_MODEL_ROLE else ""
+
+    error_msg = f"""
+─── API Key Missing ───────────────────────────────────────────────
+
+  Error: {env_var} environment variable is not set.
+         This is required to use {name}{role_msg}.
+
+  To fix this:
+
+  1. Get your API key from:
+     {url}
+
+  2. Set it in your environment:
+     export {env_var}='your-key-here'
+
+     Or add it to your .env file in the project root:
+     {env_var}=your-key-here
+
+  3. Alternatively, you can use a local model with Ollama:
+     (No API key required)
+
+───────────────────────────────────────────────────────────────────
+""".strip()  # noqa: W293
+    return error_msg
+
+
+LOCAL_PROVIDERS = frozenset({cs.Provider.OLLAMA})
 
 
 @dataclass
@@ -35,6 +111,30 @@ class ModelConfig:
         del result[cs.FIELD_MODEL_ID]
         return ModelConfigKwargs(**result)
 
+    def validate_api_key(self, role: str = cs.DEFAULT_MODEL_ROLE) -> None:
+        provider_lower = self.provider.lower()
+        provider_env_keys = {
+            cs.Provider.ANTHROPIC: cs.ENV_ANTHROPIC_API_KEY,
+            cs.Provider.AZURE: cs.ENV_AZURE_API_KEY,
+        }
+        env_key = provider_env_keys.get(provider_lower)
+        if (
+            provider_lower in LOCAL_PROVIDERS
+            or (
+                provider_lower == cs.Provider.GOOGLE
+                and self.provider_type == cs.GoogleProviderType.VERTEX
+            )
+            or (env_key and os.environ.get(env_key))
+        ):
+            return
+        if (
+            not self.api_key
+            or not self.api_key.strip()
+            or self.api_key == cs.DEFAULT_API_KEY
+        ):
+            error_msg = format_missing_api_key_errors(self.provider, role)
+            raise ValueError(error_msg)
+
 
 class AppConfig(BaseSettings):
     """
@@ -50,6 +150,8 @@ class AppConfig(BaseSettings):
     MEMGRAPH_HOST: str = "localhost"
     MEMGRAPH_PORT: int = 7687
     MEMGRAPH_HTTP_PORT: int = 7444
+    MEMGRAPH_USERNAME: str | None = None
+    MEMGRAPH_PASSWORD: str | None = None
     LAB_PORT: int = 3000
     MEMGRAPH_BATCH_SIZE: int = 1000
     AGENT_RETRIES: int = 3
@@ -61,7 +163,7 @@ class AppConfig(BaseSettings):
     ORCHESTRATOR_ENDPOINT: str | None = None
     ORCHESTRATOR_PROJECT_ID: str | None = None
     ORCHESTRATOR_REGION: str = cs.DEFAULT_REGION
-    ORCHESTRATOR_PROVIDER_TYPE: str | None = None
+    ORCHESTRATOR_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     ORCHESTRATOR_THINKING_BUDGET: int | None = None
     ORCHESTRATOR_SERVICE_ACCOUNT_FILE: str | None = None
 
@@ -71,11 +173,15 @@ class AppConfig(BaseSettings):
     CYPHER_ENDPOINT: str | None = None
     CYPHER_PROJECT_ID: str | None = None
     CYPHER_REGION: str = cs.DEFAULT_REGION
-    CYPHER_PROVIDER_TYPE: str | None = None
+    CYPHER_PROVIDER_TYPE: cs.GoogleProviderType | None = None
     CYPHER_THINKING_BUDGET: int | None = None
     CYPHER_SERVICE_ACCOUNT_FILE: str | None = None
 
-    LOCAL_MODEL_ENDPOINT: AnyHttpUrl = AnyHttpUrl("http://localhost:11434/v1")
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+
+    @property
+    def ollama_endpoint(self) -> str:
+        return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1"
 
     TARGET_REPO_PATH: str = "."
     SHELL_COMMAND_TIMEOUT: int = 30
@@ -145,20 +251,34 @@ class AppConfig(BaseSettings):
     QDRANT_COLLECTION_NAME: str = "code_embeddings"
     QDRANT_VECTOR_DIM: int = 768
     QDRANT_TOP_K: int = 5
+    QDRANT_UPSERT_RETRIES: int = Field(default=3, gt=0)
+    QDRANT_RETRY_BASE_DELAY: float = Field(default=0.5, gt=0)
+    QDRANT_BATCH_SIZE: int = Field(default=50, gt=0)
     EMBEDDING_MAX_LENGTH: int = 512
     EMBEDDING_PROGRESS_INTERVAL: int = 10
+
+    FLUSH_THREAD_POOL_SIZE: int = Field(default=4, gt=0)
+    FILE_FLUSH_INTERVAL: int = Field(default=500, gt=0)
 
     CACHE_MAX_ENTRIES: int = 1000
     CACHE_MAX_MEMORY_MB: int = 500
     CACHE_EVICTION_DIVISOR: int = 10
     CACHE_MEMORY_THRESHOLD_RATIO: float = 0.8
 
+    QUERY_RESULT_MAX_TOKENS: int = Field(default=16000, gt=0)
+    QUERY_RESULT_ROW_CAP: int = Field(default=500, gt=0)
+
     OLLAMA_HEALTH_TIMEOUT: float = 5.0
+    LITELLM_HEALTH_TIMEOUT: float = 5.0
 
     _active_orchestrator: ModelConfig | None = None
     _active_cypher: ModelConfig | None = None
 
     QUIET: bool = Field(False, validation_alias="CGR_QUIET")
+
+    MCP_HTTP_HOST: str = "0.0.0.0"
+    MCP_HTTP_PORT: int = 8080
+    MCP_HTTP_ENDPOINT_PATH: str = "/mcp"
 
     def _get_default_config(self, role: str) -> ModelConfig:
         role_upper = role.upper()
@@ -184,7 +304,7 @@ class AppConfig(BaseSettings):
         return ModelConfig(
             provider=cs.Provider.OLLAMA,
             model_id=cs.DEFAULT_MODEL,
-            endpoint=str(self.LOCAL_MODEL_ENDPOINT),
+            endpoint=self.ollama_endpoint,
             api_key=cs.DEFAULT_API_KEY,
         )
 
@@ -205,16 +325,14 @@ class AppConfig(BaseSettings):
     def set_orchestrator(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
-        self._active_orchestrator = ModelConfig(
-            provider=provider.lower(), model_id=model, **kwargs
-        )
+        config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
+        self._active_orchestrator = config
 
     def set_cypher(
         self, provider: str, model: str, **kwargs: Unpack[ModelConfigKwargs]
     ) -> None:
-        self._active_cypher = ModelConfig(
-            provider=provider.lower(), model_id=model, **kwargs
-        )
+        config = ModelConfig(provider=provider.lower(), model_id=model, **kwargs)
+        self._active_cypher = config
 
     def parse_model_string(self, model_string: str) -> tuple[str, str]:
         if ":" not in model_string:

@@ -8,6 +8,7 @@ from loguru import logger
 
 from ... import constants as cs
 from ... import logs as ls
+from ...decorators import recursion_guard
 from ...types_defs import ASTNode, NodeType
 from ..utils import safe_decode_text
 from .utils import extract_method_call_info, get_class_context_from_qn
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 
 class JavaMethodResolverMixin:
+    __slots__ = ()
     import_processor: ImportProcessor
     function_registry: FunctionRegistryTrieProtocol
     project_name: str
@@ -202,6 +204,10 @@ class JavaMethodResolverMixin:
             or member == f"{method_name}{cs.EMPTY_PARENS}"
         )
 
+    @recursion_guard(
+        key_func=lambda self, class_qn, *_, **__: class_qn,
+        guard_name=cs.GUARD_INHERITED_METHOD,
+    )
     def _find_inherited_method(
         self, class_qn: str, method_name: str, module_qn: str
     ) -> tuple[str, str] | None:
@@ -235,8 +241,10 @@ class JavaMethodResolverMixin:
         parts = method_call.split(cs.SEPARATOR_DOT)
         if len(parts) < 2:
             method_name = method_call
-            if current_class_qn := self._get_current_class_name(module_qn):
-                return self._find_method_return_type(current_class_qn, method_name)
+            if (current_class_qn := self._get_current_class_name(module_qn)) and (
+                result := self._find_method_return_type(current_class_qn, method_name)
+            ):
+                return result
         else:
             object_part = cs.SEPARATOR_DOT.join(parts[:-1])
             method_name = parts[-1]
@@ -348,34 +356,32 @@ class JavaMethodResolverMixin:
             logger.debug(ls.JAVA_NO_METHOD_NAME)
             return None
 
-        logger.debug(
-            ls.JAVA_RESOLVING_CALL.format(method=method_name, object=object_ref)
-        )
+        logger.debug(ls.JAVA_RESOLVING_CALL, method=method_name, object=object_ref)
 
         if not object_ref:
-            logger.debug(ls.JAVA_RESOLVING_STATIC.format(method=method_name))
+            logger.debug(ls.JAVA_RESOLVING_STATIC, method=method_name)
             result = self._resolve_static_or_local_method(str(method_name), module_qn)
             if result:
-                logger.debug(ls.JAVA_FOUND_STATIC.format(result=result))
+                logger.debug(ls.JAVA_FOUND_STATIC, result=result)
             else:
-                logger.debug(ls.JAVA_STATIC_NOT_FOUND.format(method=method_name))
+                logger.debug(ls.JAVA_STATIC_NOT_FOUND, method=method_name)
             return result
 
-        logger.debug(ls.JAVA_RESOLVING_OBJ_TYPE.format(object=object_ref))
+        logger.debug(ls.JAVA_RESOLVING_OBJ_TYPE, object=object_ref)
         if not (
             object_type := self._resolve_java_object_type(
                 str(object_ref), local_var_types, module_qn
             )
         ):
-            logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN.format(object=object_ref))
+            logger.debug(ls.JAVA_OBJ_TYPE_UNKNOWN, object=object_ref)
             return None
 
-        logger.debug(ls.JAVA_OBJ_TYPE_RESOLVED.format(type=object_type))
+        logger.debug(ls.JAVA_OBJ_TYPE_RESOLVED, type=object_type)
         result = self._resolve_instance_method(object_type, str(method_name), module_qn)
         if result:
-            logger.debug(ls.JAVA_FOUND_INSTANCE.format(result=result))
+            logger.debug(ls.JAVA_FOUND_INSTANCE, result=result)
         else:
             logger.debug(
-                ls.JAVA_INSTANCE_NOT_FOUND.format(type=object_type, method=method_name)
+                ls.JAVA_INSTANCE_NOT_FOUND, type=object_type, method=method_name
             )
         return result

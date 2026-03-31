@@ -19,6 +19,8 @@ class Provider(StrEnum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GOOGLE = "google"
+    AZURE = "azure"
+    LITELLM_PROXY = "litellm_proxy"
 
 
 class Color(StrEnum):
@@ -46,6 +48,8 @@ class FileAction(StrEnum):
     READ = "read"
     EDIT = "edit"
 
+
+DEFAULT_MODEL_ROLE = "model"
 
 BINARY_EXTENSIONS: frozenset[str] = frozenset(
     {
@@ -83,6 +87,7 @@ EXT_HH = ".hh"
 EXT_IXX = ".ixx"
 EXT_CPPM = ".cppm"
 EXT_CCM = ".ccm"
+EXT_C = ".c"
 EXT_CS = ".cs"
 EXT_PHP = ".php"
 EXT_LUA = ".lua"
@@ -95,6 +100,7 @@ RS_EXTENSIONS = (EXT_RS,)
 GO_EXTENSIONS = (EXT_GO,)
 SCALA_EXTENSIONS = (EXT_SCALA, EXT_SC)
 JAVA_EXTENSIONS = (EXT_JAVA,)
+C_EXTENSIONS = (EXT_C,)
 CPP_EXTENSIONS = (
     EXT_CPP,
     EXT_H,
@@ -125,6 +131,10 @@ DEFAULT_API_KEY = "ollama"
 
 ENV_OPENAI_API_KEY = "OPENAI_API_KEY"
 ENV_GOOGLE_API_KEY = "GOOGLE_API_KEY"
+ENV_ANTHROPIC_API_KEY = "ANTHROPIC_API_KEY"
+ENV_AZURE_API_KEY = "AZURE_API_KEY"
+ENV_AZURE_ENDPOINT = "AZURE_OPENAI_ENDPOINT"
+ENV_AZURE_API_VERSION = "AZURE_API_VERSION"
 
 HELP_ARG = "help"
 
@@ -136,8 +146,6 @@ class GoogleProviderType(StrEnum):
 
 # (H) Provider endpoints
 OPENAI_DEFAULT_ENDPOINT = "https://api.openai.com/v1"
-OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434"
-OLLAMA_DEFAULT_ENDPOINT = f"{OLLAMA_DEFAULT_BASE_URL}/v1"
 OLLAMA_HEALTH_PATH = "/api/tags"
 GOOGLE_CLOUD_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 V1_PATH = "/v1"
@@ -146,6 +154,8 @@ V1_PATH = "/v1"
 HTTP_OK = 200
 
 UNIXCODER_MODEL = "microsoft/unixcoder-base"
+EMBEDDING_DEFAULT_BATCH_SIZE = 32
+EMBEDDING_CACHE_FILENAME = ".embedding_cache.json"
 
 KEY_NODES = "nodes"
 KEY_RELATIONSHIPS = "relationships"
@@ -167,6 +177,7 @@ KEY_QUALIFIED_NAME = "qualified_name"
 KEY_START_LINE = "start_line"
 KEY_END_LINE = "end_line"
 KEY_PATH = "path"
+KEY_ABSOLUTE_PATH = "absolute_path"
 KEY_EXTENSION = "extension"
 KEY_MODULE_TYPE = "module_type"
 KEY_IMPLEMENTS_MODULE = "implements_module"
@@ -205,6 +216,10 @@ ONEOF_FILE = "file"
 ONEOF_EXTERNAL_PACKAGE = "external_package"
 ONEOF_MODULE_IMPLEMENTATION = "module_implementation"
 ONEOF_MODULE_INTERFACE = "module_interface"
+ONEOF_INTERFACE = "interface_node"
+ONEOF_ENUM = "enum_node"
+ONEOF_TYPE = "type_node"
+ONEOF_UNION = "union_node"
 
 # (H) CLI error and info messages
 CLI_ERR_OUTPUT_REQUIRES_UPDATE = (
@@ -220,6 +235,8 @@ CLI_ERR_MCP_SERVER = "MCP Server Error: {error}"
 
 CLI_MSG_UPDATING_GRAPH = "Updating knowledge graph for: {path}"
 CLI_MSG_CLEANING_DB = "Cleaning database..."
+CLI_MSG_CLEANING_HASH_CACHE = "Removing hash cache: {path}"
+CLI_MSG_CLEAN_DONE = "Clean completed successfully!"
 CLI_MSG_EXPORTING_TO = "Exporting graph to: {path}"
 CLI_MSG_GRAPH_UPDATED = "Graph update completed!"
 CLI_MSG_APP_TERMINATED = "\nApplication terminated by user."
@@ -230,10 +247,22 @@ CLI_MSG_CONNECTING_MEMGRAPH = "Connecting to Memgraph to export graph..."
 CLI_MSG_EXPORTING_DATA = "Exporting graph data..."
 CLI_MSG_OPTIMIZATION_TERMINATED = "\nOptimization session terminated by user."
 CLI_MSG_MCP_TERMINATED = "\nMCP server terminated by user."
+PACKAGE_NAME = "code-graph-rag"
+CLI_MSG_VERSION = "{package} version {version}"
 CLI_MSG_HINT_TARGET_REPO = (
     "\nHint: Make sure TARGET_REPO_PATH environment variable is set."
 )
 CLI_MSG_GRAPH_SUMMARY = "Graph Summary:"
+CLI_MSG_CONNECTING_STATS = "Fetching graph statistics..."
+CLI_STATS_NODE_TITLE = "Node Statistics"
+CLI_STATS_REL_TITLE = "Relationship Statistics"
+CLI_STATS_COL_NODE_TYPE = "Node Type"
+CLI_STATS_COL_REL_TYPE = "Relationship Type"
+CLI_STATS_COL_COUNT = "Count"
+CLI_STATS_TOTAL_NODES = "Total Nodes"
+CLI_STATS_TOTAL_RELS = "Total Relationships"
+CLI_STATS_UNKNOWN = "Unknown"
+CLI_ERR_STATS_FAILED = "Failed to get graph statistics: {error}"
 CLI_MSG_AUTO_EXCLUDE = (
     "Auto-excluding common directories (venv, node_modules, .git, etc.). "
     "Use --interactive-setup to customize."
@@ -264,7 +293,7 @@ UI_ERR_EXPORT_FAILED = "[bold red]Failed to export graph: {error}[/bold red]"
 UI_MODEL_SWITCHED = "[bold green]Model switched to: {model}[/bold green]"
 UI_MODEL_CURRENT = "[bold cyan]Current model: {model}[/bold cyan]"
 UI_MODEL_SWITCH_ERROR = "[bold red]Failed to switch model: {error}[/bold red]"
-UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model google:gemini-2.0-flash)[/bold yellow]"
+UI_MODEL_USAGE = "[bold yellow]Usage: /model <provider:model> (e.g., /model google:gemini-3.1-pro-preview)[/bold yellow]"
 UI_HELP_COMMANDS = """[bold cyan]Available commands:[/bold cyan]
   /model <provider:model> - Switch to a different model
   /model                  - Show current model
@@ -413,14 +442,21 @@ CSPROJ_SUFFIX = ".csproj"
 # (H) Cypher queries
 CYPHER_DEFAULT_LIMIT = 50
 
-CYPHER_QUERY_EMBEDDINGS = """
+_CYPHER_EMBEDDING_BASE = """
 MATCH (m:Module)-[:DEFINES]->(n)
-WHERE n:Function OR n:Method
-RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
+WHERE (n:Function OR n:Method)
+  AND m.qualified_name STARTS WITH ($project_name + '.')
+"""
+
+CYPHER_QUERY_EMBEDDINGS = (
+    _CYPHER_EMBEDDING_BASE
+    + """RETURN id(n) AS node_id, n.qualified_name AS qualified_name,
        n.start_line AS start_line, n.end_line AS end_line,
        m.path AS path
-ORDER BY n.qualified_name
 """
+)
+
+CYPHER_QUERY_PROJECT_NODE_IDS = _CYPHER_EMBEDDING_BASE + "RETURN id(n) AS node_id\n"
 
 
 class SupportedLanguage(StrEnum):
@@ -431,6 +467,7 @@ class SupportedLanguage(StrEnum):
     GO = "go"
     SCALA = "scala"
     JAVA = "java"
+    C = "c"
     CPP = "cpp"
     CSHARP = "c-sharp"
     PHP = "php"
@@ -463,6 +500,11 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         LanguageStatus.FULL,
         "Interfaces, type aliases, enums, namespaces, ES6/CommonJS modules",
         "TypeScript",
+    ),
+    SupportedLanguage.C: LanguageMetadata(
+        LanguageStatus.FULL,
+        "Functions, structs, unions, enums, preprocessor includes",
+        "C",
     ),
     SupportedLanguage.CPP: LanguageMetadata(
         LanguageStatus.FULL,
@@ -500,8 +542,8 @@ LANGUAGE_METADATA: dict[SupportedLanguage, LanguageMetadata] = {
         "C#",
     ),
     SupportedLanguage.PHP: LanguageMetadata(
-        LanguageStatus.DEV,
-        "Classes, functions, namespaces",
+        LanguageStatus.FULL,
+        "Classes, interfaces, traits, enums, namespaces, PHP 8 attributes",
         "PHP",
     ),
 }
@@ -671,7 +713,7 @@ MSG_CHAT_INSTRUCTIONS = (
 )
 
 # (H) Default titles and prompts
-DEFAULT_TABLE_TITLE = "Graph-Code Initializing..."
+DEFAULT_TABLE_TITLE = "Code-Graph-RAG Initializing..."
 OPTIMIZATION_TABLE_TITLE = "Optimization Session Configuration"
 PROMPT_ASK_QUESTION = "Ask a question"
 PROMPT_YOUR_RESPONSE = "Your response"
@@ -719,6 +761,7 @@ BUILD_EXT_CMD = "build_ext"
 INPLACE_FLAG = "--inplace"
 LANG_ATTR_PREFIX = "language_"
 LANG_ATTR_TYPESCRIPT = "language_typescript"
+LANG_ATTR_PHP = "language_php"
 
 
 class TreeSitterModule(StrEnum):
@@ -729,8 +772,10 @@ class TreeSitterModule(StrEnum):
     GO = "tree_sitter_go"
     SCALA = "tree_sitter_scala"
     JAVA = "tree_sitter_java"
+    C = "tree_sitter_c"
     CPP = "tree_sitter_cpp"
     LUA = "tree_sitter_lua"
+    PHP = "tree_sitter_php"
 
 
 # (H) Query dict keys
@@ -795,6 +840,7 @@ IGNORE_PATTERNS = frozenset(
         ".nyc_output",
         ".pnpm-store",
         ".pytest_cache",
+        ".qdrant_code_embeddings",
         ".ruff_cache",
         ".svn",
         ".tmp",
@@ -834,10 +880,25 @@ PAYLOAD_QUALIFIED_NAME = "qualified_name"
 class EventType(StrEnum):
     MODIFIED = "modified"
     CREATED = "created"
+    DELETED = "deleted"
 
 
 CYPHER_DELETE_MODULE = "MATCH (m:Module {path: $path})-[*0..]->(c) DETACH DELETE m, c"
+CYPHER_DELETE_FILE = "MATCH (f:File {path: $path}) DETACH DELETE f"
+CYPHER_DELETE_FOLDER = "MATCH (f:Folder {path: $path}) DETACH DELETE f"
 CYPHER_DELETE_CALLS = "MATCH ()-[r:CALLS]->() DELETE r"
+
+# (H) Queries for orphan pruning — returns all paths stored in the graph
+CYPHER_ALL_FILE_PATHS = (
+    "MATCH (f:File) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
+CYPHER_ALL_MODULE_PATHS_INTERNAL = (
+    "MATCH (m:Module) WHERE m.is_external IS NULL OR m.is_external = false "
+    "RETURN m.path AS path, m.qualified_name AS qualified_name"
+)
+CYPHER_ALL_FOLDER_PATHS = (
+    "MATCH (f:Folder) RETURN f.path AS path, f.absolute_path AS absolute_path"
+)
 
 REALTIME_LOGGER_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
@@ -848,6 +909,11 @@ REALTIME_LOGGER_FORMAT = (
 
 WATCHER_SLEEP_INTERVAL = 1
 LOG_LEVEL_INFO = "INFO"
+LOG_LEVEL_ERROR = "ERROR"
+
+# (H) Debounce settings for realtime watcher
+DEFAULT_DEBOUNCE_SECONDS = 5
+DEFAULT_MAX_WAIT_SECONDS = 30
 
 
 class Architecture(StrEnum):
@@ -857,7 +923,7 @@ class Architecture(StrEnum):
     AMD64 = "amd64"
 
 
-BINARY_NAME_TEMPLATE = "graph-code-{system}-{machine}"
+BINARY_NAME_TEMPLATE = "code-graph-rag-{system}-{machine}"
 BINARY_FILE_PERMISSION = 0o755
 DIST_DIR = "dist"
 BYTES_PER_MB_FLOAT = 1024 * 1024
@@ -875,7 +941,10 @@ PYINSTALLER_ARG_CLEAN = "--clean"
 PYINSTALLER_ARG_COLLECT_ALL = "--collect-all"
 PYINSTALLER_ARG_COLLECT_DATA = "--collect-data"
 PYINSTALLER_ARG_HIDDEN_IMPORT = "--hidden-import"
+PYINSTALLER_ARG_EXCLUDE_MODULE = "--exclude-module"
 PYINSTALLER_ENTRY_POINT = "main.py"
+
+PYINSTALLER_EXCLUDED_MODULES = ["logfire"]
 
 # (H) TOML parsing constants
 TOML_KEY_PROJECT = "project"
@@ -900,6 +969,7 @@ PYINSTALLER_PACKAGES: list["PyInstallerPackage"] = [
     PyInstallerPackage(name="loguru", collect_all=True),
     PyInstallerPackage(name="toml", collect_all=True),
     PyInstallerPackage(name="protobuf", collect_all=True),
+    PyInstallerPackage(name="genai_prices", collect_all=True),
 ]
 
 ALLOWED_COMMENT_MARKERS = frozenset(
@@ -956,6 +1026,22 @@ CYPHER_PREFIX = "cypher"
 CYPHER_SEMICOLON = ";"
 CYPHER_BACKTICK = "`"
 CYPHER_MATCH_KEYWORD = "MATCH"
+CYPHER_DANGEROUS_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "DELETE",
+        "DETACH",
+        "DROP",
+        "CREATE INDEX",
+        "CREATE CONSTRAINT",
+        "REMOVE",
+        "SET",
+        "MERGE",
+        "CREATE",
+        "CALL",
+        "LOAD CSV",
+        "FOREACH",
+    }
+)
 
 # (H) Tool success messages
 MSG_SURGICAL_SUCCESS = "Successfully applied surgical code replacement in: {path}"
@@ -1100,7 +1186,12 @@ SHELL_DANGEROUS_PATTERNS_SEGMENT = (
 # (H) Query tool messages
 QUERY_NOT_AVAILABLE = "N/A"
 DICT_KEY_RESULTS = "results"
+TIKTOKEN_ENCODING = "cl100k_base"
 QUERY_SUMMARY_SUCCESS = "Successfully retrieved {count} item(s) from the graph."
+QUERY_SUMMARY_TRUNCATED = (
+    "Results truncated: showing {kept} of {total} items (~{tokens} tokens, limit {max_tokens}). "
+    "Refine your query for more specific results."
+)
 QUERY_SUMMARY_TRANSLATION_FAILED = (
     "I couldn't translate your request into a database query. Error: {error}"
 )
@@ -1564,6 +1655,9 @@ GOMOD_COMMENT_PREFIX = "//"
 # (H) Gemfile parsing patterns
 GEMFILE_GEM_PREFIX = "gem "
 
+# (H) Incremental update hash cache
+HASH_CACHE_FILENAME = ".cgr-hash-cache.json"
+
 # (H) Import processor cache config
 IMPORT_CACHE_TTL = 3600
 IMPORT_CACHE_DIR = ".cache/codebase_rag"
@@ -1691,6 +1785,8 @@ TS_CS_LAMBDA_EXPRESSION = "lambda_expression"
 TS_CS_INVOCATION_EXPRESSION = "invocation_expression"
 
 # (H) Tree-sitter PHP node types
+TS_PHP_FUNCTION_DEFINITION = "function_definition"
+TS_PHP_METHOD_DECLARATION = "method_declaration"
 TS_PHP_TRAIT_DECLARATION = "trait_declaration"
 TS_PHP_FUNCTION_STATIC_DECLARATION = "function_static_declaration"
 TS_PHP_ANONYMOUS_FUNCTION = "anonymous_function"
@@ -1699,6 +1795,20 @@ TS_PHP_MEMBER_CALL_EXPRESSION = "member_call_expression"
 TS_PHP_SCOPED_CALL_EXPRESSION = "scoped_call_expression"
 TS_PHP_FUNCTION_CALL_EXPRESSION = "function_call_expression"
 TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION = "nullsafe_member_call_expression"
+TS_PHP_OBJECT_CREATION_EXPRESSION = "object_creation_expression"
+TS_PHP_NAMESPACE_DEFINITION = "namespace_definition"
+TS_PHP_NAMESPACE_USE_DECLARATION = "namespace_use_declaration"
+TS_PHP_NAMESPACE_USE_CLAUSE = "namespace_use_clause"
+TS_PHP_INCLUDE_EXPRESSION = "include_expression"
+TS_PHP_INCLUDE_ONCE_EXPRESSION = "include_once_expression"
+TS_PHP_REQUIRE_EXPRESSION = "require_expression"
+TS_PHP_REQUIRE_ONCE_EXPRESSION = "require_once_expression"
+TS_PHP_ATTRIBUTE_LIST = "attribute_list"
+TS_PHP_ATTRIBUTE = "attribute"
+TS_PHP_ATTRIBUTE_GROUP = "attribute_group"
+TS_PHP_VISIBILITY_MODIFIER = "visibility_modifier"
+TS_PHP_USE_DECLARATION = "use_declaration"
+TS_PHP_QUALIFIED_NAME = "qualified_name"
 
 # (H) Tree-sitter Lua node types for language_spec
 TS_LUA_CHUNK = "chunk"
@@ -1820,6 +1930,20 @@ CPP_STDLIB_ENTITIES = frozenset(
         "transform",
         "accumulate",
     }
+)
+
+# (H) Java stdlib package prefixes for static stdlib detection
+JAVA_STDLIB_PREFIXES = (
+    "java.",
+    "javax.",
+    "jdk.",
+    "com.sun.",
+    "sun.",
+    "org.w3c.",
+    "org.xml.",
+    "org.ietf.",
+    "org.omg.",
+    "netscape.",
 )
 
 # (H) Java common class names for heuristic detection
@@ -2129,8 +2253,9 @@ PY_SCORE_CONTAINS_BASE = 80
 TYPE_INFERENCE_LIST = "list"
 TYPE_INFERENCE_BASE_MODEL = "BaseModel"
 
-# (H) Type inference guard attribute
+# (H) Recursion guard attributes
 ATTR_TYPE_INFERENCE_IN_PROGRESS = "_type_inference_in_progress"
+GUARD_INHERITED_METHOD = "_inherited_method_guard"
 
 # (H) JS/TS ingest node types
 TS_PAIR = "pair"
@@ -2350,12 +2475,21 @@ class MCPToolName(StrEnum):
     DELETE_PROJECT = "delete_project"
     WIPE_DATABASE = "wipe_database"
     INDEX_REPOSITORY = "index_repository"
+    UPDATE_REPOSITORY = "update_repository"
     QUERY_CODE_GRAPH = "query_code_graph"
     GET_CODE_SNIPPET = "get_code_snippet"
     SURGICAL_REPLACE_CODE = "surgical_replace_code"
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"
     LIST_DIRECTORY = "list_directory"
+    SEMANTIC_SEARCH = "semantic_search"
+    ASK_AGENT = "ask_agent"
+
+
+# (H) MCP transport selection
+class MCPTransport(StrEnum):
+    STDIO = "stdio"
+    HTTP = "http"
 
 
 # (H) MCP environment variables
@@ -2395,10 +2529,12 @@ class MCPParamName(StrEnum):
     LIMIT = "limit"
     CONTENT = "content"
     DIRECTORY_PATH = "directory_path"
+    TOP_K = "top_k"
+    QUESTION = "question"
 
 
 # (H) MCP server constants
-MCP_SERVER_NAME = "graph-code"
+MCP_SERVER_NAME = "code-graph-rag"
 MCP_CONTENT_TYPE_TEXT = "text"
 MCP_DEFAULT_DIRECTORY = "."
 MCP_JSON_INDENT = 2
@@ -2413,6 +2549,12 @@ MCP_INDEX_ERROR = "Error indexing repository: {error}"
 MCP_WRITE_SUCCESS = "Successfully wrote file: {path}"
 MCP_UNKNOWN_TOOL_ERROR = "Unknown tool: {name}"
 MCP_TOOL_EXEC_ERROR = "Error executing tool '{name}': {error}"
+MCP_UPDATE_SUCCESS = "Successfully updated repository at {path} (no database wipe)."
+MCP_UPDATE_ERROR = "Error updating repository: {error}"
+MCP_SEMANTIC_NOT_AVAILABLE_RESPONSE = (
+    "Semantic search is not available. Install with: uv sync --extra semantic"
+)
+MCP_ASK_AGENT_ERROR = "Error running ask_agent: {error}"
 MCP_PROJECT_DELETED = "Successfully deleted project '{project_name}'."
 MCP_WIPE_CANCELLED = "Database wipe cancelled. Set confirm=true to proceed."
 MCP_WIPE_SUCCESS = "Database completely wiped. All projects have been removed."
@@ -2567,13 +2709,14 @@ FQN_PHP_SCOPE_TYPES = (
     TS_CLASS_DECLARATION,
     TS_INTERFACE_DECLARATION,
     TS_PHP_TRAIT_DECLARATION,
+    TS_PHP_NAMESPACE_DEFINITION,
     TS_PROGRAM,
 )
 FQN_PHP_FUNCTION_TYPES = (
-    TS_PY_FUNCTION_DEFINITION,
+    TS_PHP_FUNCTION_DEFINITION,
+    TS_PHP_METHOD_DECLARATION,
     TS_PHP_ANONYMOUS_FUNCTION,
     TS_PHP_ARROW_FUNCTION,
-    TS_PHP_FUNCTION_STATIC_DECLARATION,
 )
 
 # (H) LANGUAGE_SPECS node type tuples for Python
@@ -2609,6 +2752,13 @@ RS_IDENT_NODE_TYPES = (TS_RS_FUNCTION_ITEM, TS_RS_MOD_ITEM)
 CPP_NAME_NODE_TYPES = (
     CppNodeType.CLASS_SPECIFIER,
     TS_STRUCT_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+
+# (H) Derived node types for _c_get_name
+C_NAME_NODE_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
     TS_ENUM_SPECIFIER,
 )
 
@@ -2708,6 +2858,26 @@ SPEC_CPP_PACKAGE_INDICATORS = (
     PKG_CONANFILE,
 )
 
+# (H) FQN node type tuples for C
+FQN_C_SCOPE_TYPES = (
+    TS_CPP_TRANSLATION_UNIT,
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+FQN_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
+
+# (H) LANGUAGE_SPECS node type tuples for C
+SPEC_C_FUNCTION_TYPES = (TS_CPP_FUNCTION_DEFINITION,)
+SPEC_C_CLASS_TYPES = (
+    TS_STRUCT_SPECIFIER,
+    TS_UNION_SPECIFIER,
+    TS_ENUM_SPECIFIER,
+)
+SPEC_C_MODULE_TYPES = (TS_CPP_TRANSLATION_UNIT,)
+SPEC_C_CALL_TYPES = (TS_CPP_CALL_EXPRESSION,)
+SPEC_C_PACKAGE_INDICATORS = (PKG_CMAKE_LISTS, PKG_MAKEFILE)
+
 # (H) LANGUAGE_SPECS node type tuples for C#
 SPEC_CS_FUNCTION_TYPES = (
     TS_CS_DESTRUCTOR_DECLARATION,
@@ -2729,23 +2899,31 @@ SPEC_CS_CALL_TYPES = (TS_CS_INVOCATION_EXPRESSION,)
 
 # (H) LANGUAGE_SPECS node type tuples for PHP
 SPEC_PHP_FUNCTION_TYPES = (
-    TS_PHP_FUNCTION_STATIC_DECLARATION,
+    TS_PHP_FUNCTION_DEFINITION,
+    TS_PHP_METHOD_DECLARATION,
     TS_PHP_ANONYMOUS_FUNCTION,
-    TS_PY_FUNCTION_DEFINITION,
     TS_PHP_ARROW_FUNCTION,
 )
 SPEC_PHP_CLASS_TYPES = (
+    TS_CLASS_DECLARATION,
+    TS_INTERFACE_DECLARATION,
     TS_PHP_TRAIT_DECLARATION,
     TS_ENUM_DECLARATION,
-    TS_INTERFACE_DECLARATION,
-    TS_CLASS_DECLARATION,
 )
 SPEC_PHP_MODULE_TYPES = (TS_PROGRAM,)
 SPEC_PHP_CALL_TYPES = (
+    TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_MEMBER_CALL_EXPRESSION,
     TS_PHP_SCOPED_CALL_EXPRESSION,
-    TS_PHP_FUNCTION_CALL_EXPRESSION,
     TS_PHP_NULLSAFE_MEMBER_CALL_EXPRESSION,
+    TS_PHP_OBJECT_CREATION_EXPRESSION,
+)
+SPEC_PHP_IMPORT_TYPES = (TS_PHP_NAMESPACE_USE_DECLARATION,)
+SPEC_PHP_IMPORT_FROM_TYPES = (
+    TS_PHP_INCLUDE_EXPRESSION,
+    TS_PHP_INCLUDE_ONCE_EXPRESSION,
+    TS_PHP_REQUIRE_EXPRESSION,
+    TS_PHP_REQUIRE_ONCE_EXPRESSION,
 )
 
 # (H) LANGUAGE_SPECS node type tuples for Lua
@@ -2754,3 +2932,57 @@ SPEC_LUA_CLASS_TYPES: tuple[str, ...] = ()
 SPEC_LUA_MODULE_TYPES = (TS_LUA_CHUNK,)
 SPEC_LUA_CALL_TYPES = (TS_LUA_FUNCTION_CALL,)
 SPEC_LUA_IMPORT_TYPES = (TS_LUA_FUNCTION_CALL,)
+
+HEALTH_CHECK_DOCKER_RUNNING = "Docker daemon is running"
+HEALTH_CHECK_DOCKER_NOT_RUNNING = "Docker daemon is not running"
+HEALTH_CHECK_DOCKER_RUNNING_MSG = "Running (version {version})"
+HEALTH_CHECK_DOCKER_NOT_RESPONDING_MSG = "Not responding"
+HEALTH_CHECK_DOCKER_NOT_INSTALLED_MSG = "Not installed"
+HEALTH_CHECK_DOCKER_NOT_IN_PATH = "docker command not found in PATH"
+HEALTH_CHECK_DOCKER_TIMEOUT_MSG = "Check timed out"
+HEALTH_CHECK_DOCKER_TIMEOUT_ERROR = (
+    "The 'docker info' command took more than 5 seconds to respond."
+)
+HEALTH_CHECK_DOCKER_FAILED_MSG = "Check failed"
+HEALTH_CHECK_DOCKER_EXIT_CODE = "Non-zero exit code"
+
+HEALTH_CHECK_MEMGRAPH_SUCCESSFUL = "Memgraph connection successful"
+HEALTH_CHECK_MEMGRAPH_FAILED = "Memgraph connection failed"
+HEALTH_CHECK_MEMGRAPH_CONNECTED_MSG = "Connected and responsive at {host}:{port}"
+HEALTH_CHECK_MEMGRAPH_CONNECTION_FAILED_MSG = "Connection or query failed"
+HEALTH_CHECK_MEMGRAPH_UNEXPECTED_FAILURE_MSG = "Unexpected failure"
+HEALTH_CHECK_MEMGRAPH_ERROR = "Memgraph error: {error}"
+HEALTH_CHECK_MEMGRAPH_QUERY = "RETURN 1 AS test;"
+
+HEALTH_CHECK_API_KEY_SET = "{display_name} API key is set"
+HEALTH_CHECK_API_KEY_NOT_SET = "{display_name} API key is not set"
+HEALTH_CHECK_API_KEY_CONFIGURED = "Configured"
+HEALTH_CHECK_API_KEY_NOT_CONFIGURED = "Not set"
+HEALTH_CHECK_API_KEY_MISSING_MSG = (
+    "Set the {env_name} environment variable or configure it in your settings."
+)
+
+HEALTH_CHECK_TOOL_INSTALLED = "{tool_name} is installed"
+HEALTH_CHECK_TOOL_NOT_INSTALLED = "{tool_name} is not installed"
+HEALTH_CHECK_TOOL_INSTALLED_MSG = "Installed ({path})"
+HEALTH_CHECK_TOOL_NOT_IN_PATH_MSG = "'{cmd}' not found in PATH"
+HEALTH_CHECK_TOOL_TIMEOUT_MSG = "Check timed out"
+HEALTH_CHECK_TOOL_TIMEOUT_ERROR = (
+    "The command to find '{cmd}' took more than 4 seconds to respond."
+)
+HEALTH_CHECK_TOOL_FAILED_MSG = "Check failed"
+
+HEALTH_CHECK_TOOLS = [
+    ("GEMINI_API_KEY", "Gemini"),
+    ("OPENAI_API_KEY", "OpenAI"),
+    ("ORCHESTRATOR_API_KEY", "Orchestrator"),
+    ("CYPHER_API_KEY", "Cypher"),
+]
+
+HEALTH_CHECK_EXTERNAL_TOOLS = [
+    ("ripgrep", "rg"),
+    ("cmake", "cmake"),
+]
+
+SHELL_CMD_WHERE = "where"
+SHELL_CMD_WHICH = "which"

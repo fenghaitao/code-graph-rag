@@ -36,14 +36,17 @@ class TestProcessCallsInFilePython:
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "test_module.py"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 def helper():
     pass
 
 def main():
     helper()
     print("hello")
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -75,14 +78,17 @@ def main():
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "test_module.py"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 class MyClass:
     def helper(self):
         pass
 
     def main(self):
         self.helper()
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -114,20 +120,26 @@ class MyClass:
 
         utils_dir = temp_repo / "utils"
         utils_dir.mkdir()
-        (utils_dir / "__init__.py").write_text("")
-        (utils_dir / "helpers.py").write_text("""
+        (utils_dir / "__init__.py").write_text(encoding="utf-8", data="")
+        (utils_dir / "helpers.py").write_text(
+            encoding="utf-8",
+            data="""
 def format_string(s):
     return s.upper()
-""")
+""",
+        )
 
         main_file = temp_repo / "main.py"
-        main_file.write_text("""
+        main_file.write_text(
+            encoding="utf-8",
+            data="""
 from utils.helpers import format_string
 
 def process():
     result = format_string("hello")
     return result
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -158,12 +170,15 @@ def process():
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "test_module.py"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 def setup():
     pass
 
 setup()
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -196,7 +211,9 @@ class TestProcessCallsInFileJavaScript:
             pytest.skip("JavaScript parser not available")
 
         test_file = temp_repo / "test.js"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 function helper() {
     return 42;
 }
@@ -205,7 +222,8 @@ function main() {
     const result = helper();
     console.log(result);
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -233,7 +251,9 @@ function main() {
             pytest.skip("JavaScript parser not available")
 
         test_file = temp_repo / "test.js"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 class MyClass {
     helper() {
         return 42;
@@ -243,7 +263,8 @@ class MyClass {
         return this.helper();
     }
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -271,13 +292,16 @@ class MyClass {
             pytest.skip("JavaScript parser not available")
 
         test_file = temp_repo / "test.js"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 function process(data) {
     const keys = Object.keys(data);
     const parsed = JSON.parse('{}');
     return keys;
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -310,7 +334,9 @@ class TestProcessCallsInFileJava:
             pytest.skip("Java parser not available")
 
         test_file = temp_repo / "Test.java"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 public class Test {
     private void helper() {
     }
@@ -320,7 +346,8 @@ public class Test {
         System.out.println("hello");
     }
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -348,7 +375,9 @@ public class Test {
             pytest.skip("Java parser not available")
 
         test_file = temp_repo / "Calculator.java"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 public class Calculator {
     public int add(int a, int b) {
         return a + b;
@@ -358,7 +387,8 @@ public class Calculator {
         return add(1, 2);
     }
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -391,14 +421,17 @@ class TestProcessCallsInFileCpp:
             pytest.skip("C++ parser not available")
 
         test_file = temp_repo / "test.cpp"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 void helper() {
 }
 
 void main_func() {
     helper();
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -429,7 +462,9 @@ void main_func() {
             pytest.skip("C++ parser not available")
 
         test_file = temp_repo / "test.cpp"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 class MyClass {
 public:
     void helper() {
@@ -439,7 +474,8 @@ public:
         helper();
     }
 };
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -469,7 +505,9 @@ class TestProcessCallsInFileRust:
             pytest.skip("Rust parser not available")
 
         test_file = temp_repo / "lib.rs"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 fn helper() -> i32 {
     42
 }
@@ -477,7 +515,8 @@ fn helper() -> i32 {
 fn main_func() {
     let result = helper();
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -508,7 +547,9 @@ fn main_func() {
             pytest.skip("Rust parser not available")
 
         test_file = temp_repo / "lib.rs"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 struct MyStruct;
 
 impl MyStruct {
@@ -520,7 +561,8 @@ impl MyStruct {
         self.helper();
     }
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -550,7 +592,9 @@ class TestProcessCallsInFileTypeScript:
             pytest.skip("TypeScript parser not available")
 
         test_file = temp_repo / "test.ts"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 function helper(): number {
     return 42;
 }
@@ -559,7 +603,8 @@ function main(): void {
     const result = helper();
     console.log(result);
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -587,7 +632,9 @@ function main(): void {
             pytest.skip("TypeScript parser not available")
 
         test_file = temp_repo / "test.ts"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 class MyClass {
     private helper(): number {
         return 42;
@@ -597,7 +644,8 @@ class MyClass {
         return this.helper();
     }
 }
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -627,7 +675,7 @@ class TestProcessCallsEdgeCases:
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "empty.py"
-        test_file.write_text("")
+        test_file.write_text(encoding="utf-8", data="")
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -655,11 +703,14 @@ class TestProcessCallsEdgeCases:
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "imports_only.py"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 import os
 import sys
 from pathlib import Path
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -680,7 +731,9 @@ from pathlib import Path
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "nested.py"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 def a():
     return 1
 
@@ -693,7 +746,8 @@ def c(x):
 def main():
     result = c(b(a()))
     return result
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -726,7 +780,9 @@ def main():
             pytest.skip("Python parser not available")
 
         test_file = temp_repo / "chained.py"
-        test_file.write_text("""
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
 class Builder:
     def with_name(self, name):
         return self
@@ -737,10 +793,15 @@ class Builder:
     def build(self):
         return {}
 
+def helper():
+    pass
+
 def main():
+    helper()
     result = Builder().with_name("test").with_value(42).build()
     return result
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -757,6 +818,10 @@ def main():
         ]
         assert len(calls) >= 1
 
+        # (H) Builder() is a class instantiation, not a function call
+        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        assert len(class_targets) == 0
+
     def test_handles_init_py_module_qn(
         self,
         temp_repo: Path,
@@ -769,12 +834,15 @@ def main():
 
         pkg_dir = temp_repo / "mypackage"
         pkg_dir.mkdir()
-        (pkg_dir / "__init__.py").write_text("""
+        (pkg_dir / "__init__.py").write_text(
+            encoding="utf-8",
+            data="""
 def package_func():
     pass
 
 package_func()
-""")
+""",
+        )
 
         updater = GraphUpdater(
             ingestor=mock_ingestor,
@@ -793,3 +861,90 @@ package_func()
         caller_qns = [c.args[0][2] for c in calls]
         package_callers = [qn for qn in caller_qns if "mypackage" in qn]
         assert len(package_callers) >= 1
+
+
+class TestModuleCallsClassFiltered:
+    def test_module_does_not_call_class_python(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
+class MyClass:
+    def method(self):
+        pass
+
+def helper():
+    pass
+
+helper()
+""",
+        )
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        calls = [
+            c
+            for c in mock_ingestor.ensure_relationship_batch.call_args_list
+            if c.args[1] == cs.RelationshipType.CALLS
+        ]
+
+        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        assert class_targets == []
+
+        helper_calls = [c for c in calls if "helper" in c.args[2][2]]
+        assert len(helper_calls) >= 1
+
+    def test_function_does_not_call_class_python(
+        self,
+        temp_repo: Path,
+        mock_ingestor: MagicMock,
+        parsers_and_queries: tuple,
+    ) -> None:
+        parsers, queries = parsers_and_queries
+        if cs.SupportedLanguage.PYTHON not in parsers:
+            pytest.skip("Python parser not available")
+
+        test_file = temp_repo / "test_module.py"
+        test_file.write_text(
+            encoding="utf-8",
+            data="""
+class MyClass:
+    pass
+
+def factory():
+    obj = MyClass()
+    return obj
+""",
+        )
+
+        updater = GraphUpdater(
+            ingestor=mock_ingestor,
+            repo_path=temp_repo,
+            parsers=parsers,
+            queries=queries,
+        )
+        updater.run()
+
+        calls = [
+            c
+            for c in mock_ingestor.ensure_relationship_batch.call_args_list
+            if c.args[1] == cs.RelationshipType.CALLS
+        ]
+
+        class_targets = [c for c in calls if c.args[2][0] == cs.NodeLabel.CLASS]
+        assert class_targets == []

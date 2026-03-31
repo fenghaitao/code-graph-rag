@@ -48,6 +48,7 @@ class DefinitionProcessor(
         self.import_processor = import_processor
         self.module_qn_to_file_path = module_qn_to_file_path
         self.class_inheritance: dict[str, list[str]] = {}
+        self._deferred_cpp_methods: list = []
         self._handler = get_handler(cs.SupportedLanguage.PYTHON)
 
     def process_file(
@@ -100,6 +101,7 @@ class DefinitionProcessor(
                     cs.KEY_QUALIFIED_NAME: module_qn,
                     cs.KEY_NAME: file_path.name,
                     cs.KEY_PATH: relative_path_str,
+                    cs.KEY_ABSOLUTE_PATH: file_path.resolve().as_posix(),
                 },
             )
 
@@ -130,7 +132,8 @@ class DefinitionProcessor(
             self._ingest_classes_and_methods(root_node, module_qn, language, queries)
             self._ingest_object_literal_methods(root_node, module_qn, language, queries)
             self._ingest_commonjs_exports(root_node, module_qn, language, queries)
-            self._ingest_es6_exports(root_node, module_qn, language, queries)
+            if language in {cs.SupportedLanguage.JS, cs.SupportedLanguage.TS}:
+                self._ingest_es6_exports(root_node, module_qn, language, queries)
             self._ingest_assignment_arrow_functions(
                 root_node, module_qn, language, queries
             )

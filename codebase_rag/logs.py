@@ -49,7 +49,22 @@ NO_SOURCE_FOR = "No source code found for {name}"
 EMBEDDINGS_COMPLETE = "Successfully generated {count} semantic embeddings"
 EMBEDDING_GENERATION_FAILED = "Failed to generate semantic embeddings: {error}"
 EMBEDDING_STORE_FAILED = "Failed to store embedding for {name}: {error}"
+EMBEDDING_STORE_RETRY = "Qdrant upsert failed (attempt {attempt}/{max_attempts}), retrying in {delay:.1f}s: {error}"
+EMBEDDING_BATCH_STORED = "Stored batch of {count} embeddings in Qdrant"
+EMBEDDING_BATCH_FAILED = "Failed to store embedding batch: {error}"
 EMBEDDING_SEARCH_FAILED = "Failed to search embeddings: {error}"
+EMBEDDING_RECONCILE_OK = "Qdrant reconciliation: all {count} expected embeddings found"
+EMBEDDING_RECONCILE_MISSING = "Qdrant reconciliation: {missing} of {expected} embeddings missing (IDs: {sample_ids})"
+EMBEDDING_RECONCILE_FAILED = "Qdrant reconciliation check failed: {error}"
+QDRANT_DELETE_PROJECT = "Deleting {count} Qdrant vectors for project '{project}'"
+QDRANT_DELETE_PROJECT_DONE = "Deleted Qdrant vectors for project '{project}'"
+QDRANT_DELETE_PROJECT_FAILED = (
+    "Failed to delete Qdrant vectors for project '{project}': {error}"
+)
+EMBEDDING_CACHE_HIT = "Embedding cache hit for {count} snippets"
+EMBEDDING_CACHE_LOADED = "Loaded embedding cache with {count} entries from {path}"
+EMBEDDING_CACHE_SAVE_FAILED = "Failed to save embedding cache to {path}: {error}"
+EMBEDDING_CACHE_LOAD_FAILED = "Failed to load embedding cache from {path}: {error}"
 
 # (H) Image logs
 IMAGE_COPIED = "Copied image to temporary path: {path}"
@@ -97,8 +112,25 @@ CGRIGNORE_READ_FAILED = "Failed to read {path}: {error}"
 
 # (H) File watcher logs
 WATCHER_ACTIVE = "File watcher is now active."
+WATCHER_DEBOUNCE_ACTIVE = (
+    "File watcher active with debouncing (debounce={debounce}s, max_wait={max_wait}s)"
+)
 WATCHER_SKIP_NO_QUERY = "Ingestor does not support querying, skipping real-time update."
 CHANGE_DETECTED = "Change detected: {event_type} on {path}. Updating graph."
+CHANGE_DEBOUNCING = (
+    "Change detected: {event_type} on {name} (debouncing for {debounce}s)"
+)
+DEBOUNCE_RESET = "Reset debounce timer for {path}"
+DEBOUNCE_MAX_WAIT = "Max wait ({max_wait}s) exceeded for {path}, processing now"
+DEBOUNCE_SCHEDULED = (
+    "Scheduled update for {path} in {debounce}s (max wait: {remaining}s remaining)"
+)
+DEBOUNCE_PROCESSING = "Processing debounced change: {path}"
+DEBOUNCE_NO_EVENT = "No pending event for {path}, skipping"
+DEBOUNCE_MAX_WAIT_ADJUSTED = (
+    "max_wait ({max_wait}s) is less than debounce ({debounce}s). "
+    "Setting max_wait to debounce value."
+)
 DELETION_QUERY = "Ran deletion query for path: {path}"
 RECALC_CALLS = "Recalculating all function call relationships for consistency..."
 GRAPH_UPDATED = "Graph updated successfully for change in: {name}"
@@ -155,7 +187,8 @@ SOURCE_AST_FAILED = "AST extraction failed for {name}: {error}"
 # (H) Memgraph logs
 MG_CONNECTING = "Connecting to Memgraph at {host}:{port}..."
 MG_CONNECTED = "Successfully connected to Memgraph."
-MG_EXCEPTION = "An exception occurred: {error}. Flushing remaining items..."
+MG_EXCEPTION = "An exception occurred: {error}. Attempting best-effort flush..."
+MG_FLUSH_ERROR = "Failed to flush during cleanup: {error}"
 MG_DISCONNECTED = "\nDisconnected from Memgraph."
 MG_CYPHER_ERROR = "!!! Cypher Error: {error}"
 MG_CYPHER_QUERY = "    Query: {query}"
@@ -168,6 +201,8 @@ MG_DELETING_PROJECT = "--- Deleting project: {project_name} ---"
 MG_PROJECT_DELETED = "--- Project {project_name} deleted. ---"
 MG_ENSURING_CONSTRAINTS = "Ensuring constraints..."
 MG_CONSTRAINTS_DONE = "Constraints checked/created."
+MG_ENSURING_INDEXES = "Ensuring label-property indexes for MERGE performance..."
+MG_INDEXES_DONE = "Indexes checked/created."
 MG_NODE_BUFFER_FLUSH = (
     "Node buffer reached batch size ({size}). Performing incremental flush."
 )
@@ -175,7 +210,9 @@ MG_REL_BUFFER_FLUSH = (
     "Relationship buffer reached batch size ({size}). Performing incremental flush."
 )
 MG_NO_CONSTRAINT = "No unique constraint defined for label '{label}'. Skipping flush."
-MG_MISSING_PROP = "Skipping {label} node missing required '{key}' property: {props}"
+MG_MISSING_PROP = (
+    "Skipping {label} node missing required '{key}' property (keys: {prop_keys})"
+)
 MG_NODES_FLUSHED = "Flushed {flushed} of {total} buffered nodes."
 MG_NODES_SKIPPED = (
     "Skipped {count} buffered nodes due to missing identifiers or constraints."
@@ -187,6 +224,18 @@ MG_RELS_FLUSHED = (
 )
 MG_FLUSH_START = "--- Flushing all pending writes to database... ---"
 MG_FLUSH_COMPLETE = "--- Flushing complete. ---"
+MG_PARALLEL_FLUSH_NODES = (
+    "Parallel flushing {count} label groups with {workers} workers"
+)
+MG_PARALLEL_FLUSH_RELS = (
+    "Parallel flushing {count} relationship groups with {workers} workers"
+)
+MG_LABEL_FLUSH_ERROR = "Error flushing label group '{label}': {error}"
+MG_REL_FLUSH_ERROR = "Error flushing relationship group '{pattern}': {error}"
+MG_NO_CONN_NODES = "No database connection for label '{label}', skipping flush."
+MG_NO_CONN_RELS = (
+    "No database connection for relationship group '{pattern}', skipping flush."
+)
 MG_FETCH_QUERY = "Executing fetch query: {query} with params: {params}"
 MG_WRITE_QUERY = "Executing write query: {query} with params: {params}"
 MG_EXPORTING = "Exporting graph data..."
@@ -213,6 +262,10 @@ TOOL_FILE_EDIT_SURGICAL_SUCCESS = (
 )
 TOOL_QUERY_RECEIVED = "[Tool:QueryGraph] Received NL query: '{query}'"
 TOOL_QUERY_ERROR = "[Tool:QueryGraph] Error during query execution: {error}"
+QUERY_RESULTS_TRUNCATED = (
+    "[Tool:QueryGraph] Results truncated: showing {kept} of {total} rows "
+    "({tokens} tokens, limit {max_tokens})"
+)
 TOOL_SHELL_EXEC = "Executing shell command: {cmd}"
 TOOL_SHELL_RETURN = "Return code: {code}"
 TOOL_SHELL_STDOUT = "Stdout: {stdout}"
@@ -310,6 +363,7 @@ FILE_WRITER_SUCCESS = "[FileWriter] Successfully wrote {chars} characters to {pa
 # (H) Error logs (used with logger.error/warning)
 UNEXPECTED = "An unexpected error occurred: {error}"
 EXPORT_ERROR = "Export error: {error}"
+STATS_ERROR = "Stats error: {error}"
 INDEXING_FAILED = "Indexing failed"
 PATH_NOT_IN_QUESTION = (
     "Could not find original path in question for replacement: {path}"
@@ -322,6 +376,7 @@ FILE_OUTSIDE_ROOT = "Security risk: Attempted to {action} file outside of projec
 CALL_PROCESSING_FILE = "Processing calls in cached AST for: {path}"
 CALL_PROCESSING_FAILED = "Failed to process calls in {path}: {error}"
 CALL_FOUND_NODES = "Found {count} call nodes in {language} for {caller}"
+CALL_SKIP_CLASS = "Skipping CALLS edge from {caller} to {call_name} (callee is Class node: {callee_qn})"
 CALL_FOUND = (
     "Found call from {caller} to {call_name} (resolved as {callee_type}:{callee_qn})"
 )
@@ -591,6 +646,14 @@ MCP_WRITE_FILE = "[MCP] write_file: {path}"
 MCP_ERROR_WRITE = "[MCP] Error writing file: {error}"
 MCP_LIST_DIR = "[MCP] list_directory: {path}"
 MCP_ERROR_LIST_DIR = "[MCP] Error listing directory: {error}"
+MCP_SEMANTIC_NOT_AVAILABLE = (
+    "[MCP] Semantic search not available. Install with: uv sync --extra semantic"
+)
+MCP_UPDATING_REPO = "[MCP] Updating repository at: {path}"
+MCP_ERROR_UPDATING = "[MCP] Error updating repository: {error}"
+MCP_SEMANTIC_SEARCH = "[MCP] semantic_search: {query}"
+MCP_ASK_AGENT = "[MCP] ask_agent: {question}"
+MCP_ASK_AGENT_ERROR = "[MCP] Error running ask_agent: {error}"
 
 # (H) MCP server logs
 MCP_SERVER_INFERRED_ROOT = "[GraphCode MCP] Using inferred project root: {path}"
@@ -610,6 +673,31 @@ MCP_SERVER_CREATED = "[GraphCode MCP] Server created, starting stdio transport..
 MCP_SERVER_CONNECTED = "[GraphCode MCP] Connected to Memgraph at {host}:{port}"
 MCP_SERVER_FATAL_ERROR = "[GraphCode MCP] Fatal error: {error}"
 MCP_SERVER_SHUTDOWN = "[GraphCode MCP] Shutting down server..."
+MCP_HTTP_SERVER_STARTING = "[GraphCode MCP] Starting HTTP server on {host}:{port}..."
+MCP_HTTP_SERVER_READY = (
+    "[GraphCode MCP] HTTP server ready. MCP endpoint: http://{host}:{port}/mcp"
+)
+
+# (H) Incremental update logs
+HASH_CACHE_LOADED = "Loaded hash cache with {count} entries from {path}"
+HASH_CACHE_LOAD_FAILED = "Failed to load hash cache from {path}: {error}"
+HASH_CACHE_SAVED = "Saved hash cache with {count} entries to {path}"
+HASH_CACHE_SAVE_FAILED = "Failed to save hash cache to {path}: {error}"
+PERIODIC_FLUSH = "Periodic flush after {count} files processed"
+INCREMENTAL_SKIPPED = "Skipped {count} unchanged files"
+INCREMENTAL_CHANGED = "Re-indexing {count} changed files"
+INCREMENTAL_DELETED = "Removed state for {count} deleted files"
+INCREMENTAL_FORCE = "Force mode enabled, bypassing hash cache"
+
+# (H) Orphan pruning logs
+PRUNE_START = "--- Pruning orphan nodes from graph ---"
+PRUNE_FOUND = "Found {count} orphan {label} nodes to remove"
+PRUNE_DELETING = "Pruning orphan {label}: {path}"
+PRUNE_COMPLETE = "Pruning complete. Removed {count} orphan nodes."
+PRUNE_SKIP = "No orphan nodes found. Graph is clean."
+FILE_HASH_UNCHANGED = "File unchanged (hash match): {path}"
+FILE_HASH_CHANGED = "File changed (hash mismatch): {path}"
+FILE_HASH_NEW = "New file detected: {path}"
 
 # (H) Exclude prompt logs
 EXCLUDE_INVALID_INDEX = "Invalid index: {index} (out of range)"
@@ -619,3 +707,7 @@ EXCLUDE_INVALID_INPUT = "Invalid input: '{input}' (expected number)"
 MODEL_SWITCHED = "Model switched to: {model}"
 MODEL_SWITCH_FAILED = "Failed to switch model: {error}"
 MODEL_CURRENT = "Current model: {model}"
+
+# (H) Progress bar logs
+PROGRESS_INDEXING_LABEL = "[bold blue]Indexing files..."
+PROGRESS_FILES_PROCESSED = "{count} processed"

@@ -136,18 +136,15 @@ class TestFlushRelationshipsForAllTypes:
 
         ingestor.conn = mock_conn
 
-        ingestor.relationship_buffer.append(
-            (
-                (NodeLabel.MODULE.value, KEY_QUALIFIED_NAME, "module.test"),
-                rel_type.value,
-                (NodeLabel.FUNCTION.value, KEY_QUALIFIED_NAME, "module.test.func"),
-                None,
-            )
+        ingestor.ensure_relationship_batch(
+            (NodeLabel.MODULE.value, KEY_QUALIFIED_NAME, "module.test"),
+            rel_type.value,
+            (NodeLabel.FUNCTION.value, KEY_QUALIFIED_NAME, "module.test.func"),
         )
         ingestor.flush_relationships()
 
         mock_cursor.execute.assert_called_once()
-        assert ingestor.relationship_buffer == []
+        assert ingestor._rel_count == 0
 
 
 class TestUniqueKeyPropertyNames:
@@ -230,10 +227,13 @@ class TestEnsureConstraintsForAllLabels:
         ingestor = MemgraphIngestor(host="localhost", port=7687)
         executed_queries: list[str] = []
 
-        def capture_query(query: str) -> None:
+        def capture_query(query: str, params: object = None) -> list[object]:
             executed_queries.append(query)
+            return []
 
-        with patch.object(ingestor, "_execute_query", side_effect=capture_query):
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=capture_query
+        ):
             ingestor.ensure_constraints()
 
         for label in NodeLabel:
@@ -243,6 +243,27 @@ class TestEnsureConstraintsForAllLabels:
             )
             assert expected in executed_queries, (
                 f"Missing constraint for {label.value}. Expected query: {expected}"
+            )
+
+    def test_ensure_constraints_creates_all_indexes(self) -> None:
+        ingestor = MemgraphIngestor(host="localhost", port=7687)
+        executed_queries: list[str] = []
+
+        def capture_query(query: str, params: object = None) -> list[object]:
+            executed_queries.append(query)
+            return []
+
+        with patch.object(
+            MemgraphIngestor, "_execute_query", side_effect=capture_query
+        ):
+            ingestor.ensure_constraints()
+
+        for label in NodeLabel:
+            prop = NODE_UNIQUE_CONSTRAINTS[label.value]
+            expected_index = f"CREATE INDEX ON :{label.value}({prop});"
+            assert expected_index in executed_queries, (
+                f"Missing index for {label.value}. Expected query: {expected_index}. "
+                "Indexes are required for efficient MERGE operations in Memgraph."
             )
 
 

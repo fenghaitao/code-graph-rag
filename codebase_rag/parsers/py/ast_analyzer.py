@@ -10,7 +10,7 @@ from ... import constants as cs
 from ... import logs as lg
 from ...types_defs import LanguageQueries
 from ..js_ts.utils import find_method_in_ast as find_js_method_in_ast
-from ..utils import safe_decode_text
+from ..utils import safe_decode_text, sorted_captures
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -45,6 +45,7 @@ else:
 
 
 class PythonAstAnalyzerMixin(_AstBase):
+    __slots__ = ()
     queries: dict[cs.SupportedLanguage, LanguageQueries]
     module_qn_to_file_path: dict[str, Path]
     ast_cache: ASTCacheProtocol
@@ -140,7 +141,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             right_node, module_qn
         ):
             local_var_types[var_name] = inferred_type
-            logger.debug(lg.PY_TYPE_SIMPLE.format(var=var_name, type=inferred_type))
+            logger.debug(lg.PY_TYPE_SIMPLE, var=var_name, type=inferred_type)
 
     def _process_assignment_complex(
         self, assignment_node: Node, local_var_types: dict[str, str], module_qn: str
@@ -162,7 +163,7 @@ class PythonAstAnalyzerMixin(_AstBase):
             right_node, module_qn, local_var_types
         ):
             local_var_types[var_name] = inferred_type
-            logger.debug(lg.PY_TYPE_COMPLEX.format(var=var_name, type=inferred_type))
+            logger.debug(lg.PY_TYPE_COMPLEX, var=var_name, type=inferred_type)
 
     def _extract_assignment_variable_name(self, node: Node) -> str | None:
         if node.type != cs.TS_PY_IDENTIFIER or node.text is None:
@@ -210,7 +211,7 @@ class PythonAstAnalyzerMixin(_AstBase):
         if not class_query:
             return None
         cursor = QueryCursor(class_query)
-        captures = cursor.captures(root_node)
+        captures = sorted_captures(cursor, root_node)
 
         method_query = lang_queries[cs.QUERY_KEY_FUNCTIONS]
         if not method_query:
@@ -232,7 +233,7 @@ class PythonAstAnalyzerMixin(_AstBase):
                 continue
 
             method_cursor = QueryCursor(method_query)
-            method_captures = method_cursor.captures(body_node)
+            method_captures = sorted_captures(method_cursor, body_node)
 
             for method_node in method_captures.get(cs.QUERY_CAPTURE_FUNCTION, []):
                 if not isinstance(method_node, Node):
@@ -344,13 +345,11 @@ class PythonAstAnalyzerMixin(_AstBase):
             local_vars = self.build_local_variable_type_map(method_node, module_qn)
             if identifier in local_vars:
                 logger.debug(
-                    lg.PY_VAR_FROM_CONTEXT.format(
-                        var=identifier, type=local_vars[identifier]
-                    )
+                    lg.PY_VAR_FROM_CONTEXT, var=identifier, type=local_vars[identifier]
                 )
                 return local_vars[identifier]
 
-        logger.debug(lg.PY_VAR_CANNOT_INFER.format(var=identifier))
+        logger.debug(lg.PY_VAR_CANNOT_INFER, var=identifier)
         return None
 
     def _analyze_attribute_return(self, expr_node: Node, method_qn: str) -> str | None:

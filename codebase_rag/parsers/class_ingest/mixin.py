@@ -9,11 +9,12 @@ from tree_sitter import Node, QueryCursor
 
 from ... import constants as cs
 from ... import logs
+from ...language_spec import LanguageSpec
 from ...types_defs import ASTNode, PropertyDict
 from ..java import utils as java_utils
 from ..py import resolve_class_name
 from ..rs import utils as rs_utils
-from ..utils import ingest_method, safe_decode_text
+from ..utils import ingest_method, safe_decode_text, sorted_captures
 from . import cpp_modules
 from . import identity as id_
 from . import method_override as mo
@@ -21,7 +22,6 @@ from . import node_type as nt
 from . import relationships as rel
 
 if TYPE_CHECKING:
-    from ...language_spec import LanguageSpec
     from ...services import IngestorProtocol
     from ...types_defs import (
         FunctionRegistryTrieProtocol,
@@ -31,7 +31,22 @@ if TYPE_CHECKING:
     from ..import_processor import ImportProcessor
 
 
+def _is_nested_inside_function(
+    node: Node, class_body: Node, lang_config: LanguageSpec
+) -> bool:
+    current = node.parent
+    while current and current is not class_body:
+        if (
+            current.type in lang_config.function_node_types
+            and current.child_by_field_name(cs.FIELD_BODY) is not None
+        ):
+            return True
+        current = current.parent
+    return False
+
+
 class ClassIngestMixin:
+    __slots__ = ()
     ingestor: IngestorProtocol
     repo_path: Path
     project_name: str
@@ -81,7 +96,7 @@ class ClassIngestMixin:
 
         lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         cursor = QueryCursor(query)
-        captures = cursor.captures(root_node)
+        captures = sorted_captures(cursor, root_node)
         class_nodes = captures.get(cs.CAPTURE_CLASS, [])
         module_nodes = captures.get(cs.ONEOF_MODULE, [])
 
@@ -142,6 +157,9 @@ class ClassIngestMixin:
             cs.KEY_DOCSTRING: self._get_docstring(class_node),
             cs.KEY_IS_EXPORTED: is_exported,
         }
+        if file_path is not None:
+            class_props[cs.KEY_PATH] = file_path.relative_to(self.repo_path).as_posix()
+            class_props[cs.KEY_ABSOLUTE_PATH] = file_path.resolve().as_posix()
         self.ingestor.ensure_node_batch(node_type, class_props)
         self.function_registry[class_qn] = node_type
         if class_name:
@@ -160,7 +178,9 @@ class ClassIngestMixin:
             self._resolve_to_qn,
             self.function_registry,
         )
-        self._ingest_class_methods(class_node, class_qn, language, lang_queries)
+        self._ingest_class_methods(
+            class_node, class_qn, language, lang_queries, file_path
+        )
 
     def _ingest_rust_impl_methods(
         self,
@@ -179,20 +199,27 @@ class ClassIngestMixin:
         if not body_node or not method_query:
             return
 
+        file_path = self.module_qn_to_file_path.get(module_qn)
+        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = sorted_captures(method_cursor, body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
-            if isinstance(method_node, Node):
-                ingest_method(
-                    method_node,
-                    class_qn,
-                    cs.NodeLabel.CLASS,
-                    self.ingestor,
-                    self.function_registry,
-                    self.simple_name_lookup,
-                    self._get_docstring,
-                    language,
-                )
+            if not isinstance(method_node, Node):
+                continue
+            if _is_nested_inside_function(method_node, body_node, lang_config):
+                continue
+            ingest_method(
+                method_node,
+                class_qn,
+                cs.NodeLabel.CLASS,
+                self.ingestor,
+                self.function_registry,
+                self.simple_name_lookup,
+                self._get_docstring,
+                language,
+                file_path=file_path,
+                repo_path=self.repo_path,
+            )
 
     def _ingest_class_methods(
         self,
@@ -200,16 +227,20 @@ class ClassIngestMixin:
         class_qn: str,
         language: cs.SupportedLanguage,
         lang_queries: LanguageQueries,
+        file_path: Path | None = None,
     ) -> None:
         body_node = class_node.child_by_field_name("body")
         method_query = lang_queries[cs.QUERY_FUNCTIONS]
         if not body_node or not method_query:
             return
 
+        lang_config: LanguageSpec = lang_queries[cs.QUERY_CONFIG]
         method_cursor = QueryCursor(method_query)
-        method_captures = method_cursor.captures(body_node)
+        method_captures = sorted_captures(method_cursor, body_node)
         for method_node in method_captures.get(cs.CAPTURE_FUNCTION, []):
             if not isinstance(method_node, Node):
+                continue
+            if _is_nested_inside_function(method_node, body_node, lang_config):
                 continue
 
             method_qualified_name = None
@@ -233,6 +264,8 @@ class ClassIngestMixin:
                 language,
                 self._extract_decorators,
                 method_qualified_name,
+                file_path=file_path,
+                repo_path=self.repo_path,
             )
 
     def _process_inline_modules(

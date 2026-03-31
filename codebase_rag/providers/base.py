@@ -6,8 +6,13 @@ from urllib.parse import urljoin
 
 import httpx
 from loguru import logger
+from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.providers.anthropic import (
+    AnthropicProvider as PydanticAnthropicProvider,
+)
+from pydantic_ai.providers.azure import AzureProvider as PydanticAzureProvider
 from pydantic_ai.providers.google import GoogleProvider as PydanticGoogleProvider
 from pydantic_ai.providers.openai import OpenAIProvider as PydanticOpenAIProvider
 
@@ -18,13 +23,15 @@ from ..config import ModelConfig, settings
 
 
 class ModelProvider(ABC):
+    __slots__ = ("config",)
+
     def __init__(self, **config: str | int | None) -> None:
         self.config = config
 
     @abstractmethod
     def create_model(
         self, model_id: str, **kwargs: str | int | None
-    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel:
+    ) -> GoogleModel | OpenAIResponsesModel | OpenAIChatModel | AnthropicModel:
         pass
 
     @abstractmethod
@@ -37,7 +44,25 @@ class ModelProvider(ABC):
         pass
 
 
+def _resolve_api_key(api_key: str | None, env_var: str) -> str | None:
+    env_key = os.environ.get(env_var)
+    if env_key:
+        return env_key
+    if api_key and api_key != cs.DEFAULT_API_KEY:
+        return api_key
+    return None
+
+
 class GoogleProvider(ModelProvider):
+    __slots__ = (
+        "api_key",
+        "provider_type",
+        "project_id",
+        "region",
+        "service_account_file",
+        "thinking_budget",
+    )
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -49,7 +74,7 @@ class GoogleProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key or os.environ.get(cs.ENV_GOOGLE_API_KEY)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_GOOGLE_API_KEY)
         self.provider_type = provider_type
         self.project_id = project_id
         self.region = region
@@ -98,6 +123,8 @@ class GoogleProvider(ModelProvider):
 
 
 class OpenAIProvider(ModelProvider):
+    __slots__ = ("api_key", "endpoint")
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -105,7 +132,7 @@ class OpenAIProvider(ModelProvider):
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.api_key = api_key or os.environ.get(cs.ENV_OPENAI_API_KEY)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_OPENAI_API_KEY)
         self.endpoint = endpoint
 
     @property
@@ -126,14 +153,16 @@ class OpenAIProvider(ModelProvider):
 
 
 class OllamaProvider(ModelProvider):
+    __slots__ = ("endpoint", "api_key")
+
     def __init__(
         self,
-        endpoint: str = cs.OLLAMA_DEFAULT_ENDPOINT,
+        endpoint: str | None = None,
         api_key: str = cs.DEFAULT_API_KEY,
         **kwargs: str | int | None,
     ) -> None:
         super().__init__(**kwargs)
-        self.endpoint = endpoint
+        self.endpoint = endpoint or settings.ollama_endpoint
         self.api_key = api_key
 
     @property
@@ -155,11 +184,90 @@ class OllamaProvider(ModelProvider):
         return OpenAIChatModel(model_id, provider=provider)
 
 
+class AnthropicProvider(ModelProvider):
+    __slots__ = ("api_key",)
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_ANTHROPIC_API_KEY)
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.ANTHROPIC
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(ex.ANTHROPIC_NO_KEY)
+
+    def create_model(self, model_id: str, **kwargs: str | int | None) -> AnthropicModel:
+        self.validate_config()
+        # (H) api_key is guaranteed to be set by validate_config
+        assert self.api_key is not None
+        provider = PydanticAnthropicProvider(api_key=self.api_key)
+        return AnthropicModel(model_id, provider=provider)
+
+
+class AzureOpenAIProvider(ModelProvider):
+    __slots__ = ("api_key", "endpoint", "api_version")
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+        api_version: str | None = None,
+        **kwargs: str | int | None,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.api_key = _resolve_api_key(api_key, cs.ENV_AZURE_API_KEY)
+        self.endpoint = endpoint or os.environ.get(cs.ENV_AZURE_ENDPOINT)
+        self.api_version = api_version or os.environ.get(cs.ENV_AZURE_API_VERSION)
+
+    @property
+    def provider_name(self) -> cs.Provider:
+        return cs.Provider.AZURE
+
+    def validate_config(self) -> None:
+        if not self.api_key:
+            raise ValueError(ex.AZURE_NO_KEY)
+        if not self.endpoint:
+            raise ValueError(ex.AZURE_NO_ENDPOINT)
+
+    def create_model(
+        self, model_id: str, **kwargs: str | int | None
+    ) -> OpenAIChatModel:
+        self.validate_config()
+        # (H) api_key and endpoint are guaranteed to be set by validate_config
+        assert self.api_key is not None
+        assert self.endpoint is not None
+        provider = PydanticAzureProvider(
+            api_key=self.api_key,
+            azure_endpoint=self.endpoint,
+            api_version=self.api_version,
+        )
+        return OpenAIChatModel(model_id, provider=provider)
+
+
 PROVIDER_REGISTRY: dict[str, type[ModelProvider]] = {
     cs.Provider.GOOGLE: GoogleProvider,
     cs.Provider.OPENAI: OpenAIProvider,
     cs.Provider.OLLAMA: OllamaProvider,
+    cs.Provider.ANTHROPIC: AnthropicProvider,
+    cs.Provider.AZURE: AzureOpenAIProvider,
 }
+
+# Import LiteLLM provider after base classes are defined to avoid circular import
+try:
+    from .litellm import LiteLLMProvider
+
+    PROVIDER_REGISTRY[cs.Provider.LITELLM_PROXY] = LiteLLMProvider
+    _litellm_available = True
+except ImportError as e:
+    logger.debug(f"LiteLLM provider not available: {e}")
+    _litellm_available = False
 
 
 def get_provider(
@@ -198,11 +306,38 @@ def list_providers() -> list[str]:
     return list(PROVIDER_REGISTRY.keys())
 
 
-def check_ollama_running(endpoint: str = cs.OLLAMA_DEFAULT_BASE_URL) -> bool:
+def check_ollama_running(endpoint: str | None = None) -> bool:
+    endpoint = endpoint or settings.OLLAMA_BASE_URL
     try:
         health_url = urljoin(endpoint, cs.OLLAMA_HEALTH_PATH)
         with httpx.Client(timeout=settings.OLLAMA_HEALTH_TIMEOUT) as client:
             response = client.get(health_url)
             return response.status_code == cs.HTTP_OK
+    except (httpx.RequestError, httpx.TimeoutException):
+        return False
+
+
+def check_litellm_proxy_running(
+    endpoint: str = "http://localhost:4000", api_key: str | None = None
+) -> bool:
+    try:
+        base_url = endpoint.rstrip("/v1").rstrip("/")
+        health_url = urljoin(base_url, "/health")
+        headers: dict[str, str] = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        with httpx.Client(timeout=settings.LITELLM_HEALTH_TIMEOUT) as client:
+            response = client.get(health_url, headers=headers)
+            if response.status_code == cs.HTTP_OK:
+                return True
+
+            # (H) Fallback to models endpoint for authenticated proxies
+            if api_key:
+                models_url = urljoin(base_url, "/v1/models")
+                response = client.get(models_url, headers=headers)
+                return response.status_code == cs.HTTP_OK
+
+            return False
     except (httpx.RequestError, httpx.TimeoutException):
         return False
